@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Binance Quantitative Terminal | Monitoramento & Trading</title>
+    <!-- Favicon -->
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
+    <!-- Estilos Customizados -->
+    <link rel="stylesheet" href="/static/css/output.css">
+    <!-- TradingView Lightweight Charts -->
+    <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+    <!-- Socket.IO Client -->
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- Top Navbar -->
+        <header class="top-navbar">
+            <div class="brand-section">
+                <div class="brand-logo">⚡</div>
+                <div>
+                    <div class="brand-title">
+                        BINANCE BOT <span id="header-brand-badge" class="brand-badge">{{ 'SIMULAÇÃO' if execution_mode
+                            == 'PAPER' else 'MODO REAL' }}</span>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; align-items: center; margin-top: 0.15rem;">
+                        <span class="db-badge {{ 'db-postgres' if 'PostgreSQL' in db_type else 'db-sqlite' }}">
+                            <span style="font-size: 0.65rem;">●</span> {{ db_type }}
+                        </span>
+                        <span class="brand-badge"
+                            style="background: rgba(16, 185, 129, 0.1); color: #10b981; border-color: rgba(16, 185, 129, 0.2);">
+                            Wilder's RSI & BB 20/2
+                        </span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Controles do Topo (Ativo, Adicionar Par, Timeframe, Modo e Status) -->
+            <div class="header-controls">
+                <!-- Seletor de Ativos + Status de Compra + Botão Adicionar Par + Gerenciador de Pares -->
+                <div style="display: flex; align-items: center; gap: 0.45rem;">
+                    <span class="text-muted" style="font-size: 0.8rem; font-weight: 600;">PAR:</span>
+                    <select id="symbol-select" class="select-control mono">
+                        {% for sym in symbols %}
+                        <option value="{{ sym }}" {{ 'selected' if sym==default_symbol else '' }}>{{ sym }}</option>
+                        {% endfor %}
+                    </select>
+                    <span id="current-pair-can-buy-badge" class="badge-status-pill can-buy-enabled"
+                        title="Status de compra para este par">COMPRA ATIVA</span>
+                    <button id="btn-open-add-asset" class="btn-secondary"
+                        style="padding: 0.45rem 0.65rem; font-size: 0.82rem; font-weight: 700;"
+                        title="Adicionar novo par de criptoativo">+ Par</button>
+                    <button id="btn-open-manage-pairs" class="btn-secondary"
+                        style="padding: 0.45rem 0.75rem; font-size: 0.82rem; font-weight: 600;"
+                        title="Gerenciar quais pares podem ser comprados e seus períodos de tempo">⚙️ Pares &
+                        Gatilhos</button>
+                </div>
+
+                <!-- Seletor de Timeframe -->
+                <div class="timeframe-group">
+                    {% for tf in timeframes %}
+                    <button class="tf-btn {{ 'active' if tf == default_timeframe else '' }}" data-tf="{{ tf }}">{{ tf
+                        }}</button>
+                    {% endfor %}
+                </div>
+
+                <!-- Seletor Modo: Simulação vs Real -->
+                <button id="btn-toggle-mode"
+                    class="mode-badge-btn {{ 'paper' if execution_mode == 'PAPER' else 'real' }}"
+                    title="Alternar entre Simulação (Paper) e Mercado Real">
+                    <span id="mode-icon">●</span>
+                    <span id="mode-text">{{ 'SIMULAÇÃO (Paper)' if execution_mode == 'PAPER' else 'MODO REAL (Binance)'
+                        }}</span>
+                </button>
+
+                <!-- Bot Status Switch -->
+                <div class="bot-switch-container">
+                    <div id="bot-status-dot" class="pulse-dot online"></div>
+                    <span id="bot-status-text" class="text-green mono" style="font-weight: 700; font-size: 0.82rem;">BOT
+                        ATIVO</span>
+                </div>
+
+                <button id="btn-toggle-bot" class="btn-secondary"
+                    style="font-size: 0.8rem; padding: 0.45rem 0.85rem;">Pausar Bot</button>
+                <button id="btn-reset-paper" class="btn-secondary"
+                    style="font-size: 0.8rem; padding: 0.45rem 0.85rem; border-color: rgba(255, 56, 92, 0.3); color: var(--color-red);">Reset
+                    Caixa</button>
+            </div>
+        </header>
+
+        <!-- Metric Cards Grid -->
+        <section class="metrics-grid">
+            <div class="metric-card">
+                <div class="metric-title">
+                    <span>Patrimônio Total</span>
+                    <span>💰</span>
+                </div>
+                <div id="portfolio-equity" class="metric-value mono text-cyan">$10,000.00</div>
+                <div class="metric-sub">Saldo em Caixa + Posições Abertas</div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-title">
+                    <span>Capital em Aberto</span>
+                    <span>📊</span>
+                </div>
+                <div id="portfolio-open-cap" class="metric-value mono">$0.00</div>
+                <div class="metric-sub">Alocação ativa no mercado</div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-title">
+                    <span>PnL Realizado (Histórico)</span>
+                    <span>📈</span>
+                </div>
+                <div id="portfolio-realized-pnl" class="metric-value mono text-green">+$0.00</div>
+                <div id="portfolio-total-trades" class="metric-sub">0 trades fechados</div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-title">
+                    <span>Taxa de Acerto (Win Rate)</span>
+                    <span>🎯</span>
+                </div>
+                <div id="portfolio-win-rate" class="metric-value mono text-gold">0.0%</div>
+                <div class="metric-sub">Operações lucrativas</div>
+            </div>
+        </section>
+
+        <!-- Main Workspace: Chart + Config Panel -->
+        <main class="workspace-grid">
+            <!-- Chart Panel -->
+            <section class="chart-panel">
+                <div class="chart-header">
+                    <div class="symbol-ticker-box">
+                        <span id="current-price" class="current-price mono">Carregando...</span>
+                        <span id="price-change" class="price-change-badge bg-green-badge mono">+0.00%</span>
+                        <div style="display: flex; gap: 0.85rem; font-size: 0.78rem;" class="text-muted mono">
+                            <span>24h Máx: <strong id="ticker-high" class="text-green">-</strong></span>
+                            <span>24h Mín: <strong id="ticker-low" class="text-red">-</strong></span>
+                            <span>Vol: <strong id="ticker-volume" class="text-cyan">-</strong></span>
+                        </div>
+                    </div>
+
+                    <!-- Indicadores Chips -->
+                    <div class="indicators-legend">
+                        <div class="indicator-chip">
+                            <span style="color: var(--color-purple);">●</span>
+                            <span>RSI (14):</span>
+                            <strong id="chip-rsi-val" class="mono">-</strong>
+                        </div>
+                        <div class="indicator-chip">
+                            <span style="color: #38bdf8;">●</span>
+                            <span>BB Sup:</span>
+                            <strong id="chip-bb-upper" class="mono">-</strong>
+                        </div>
+                        <div class="indicator-chip">
+                            <span style="color: #fbbf24;">●</span>
+                            <span>BB Méd:</span>
+                            <strong id="chip-bb-middle" class="mono">-</strong>
+                        </div>
+                        <div class="indicator-chip">
+                            <span style="color: #818cf8;">●</span>
+                            <span>BB Inf:</span>
+                            <strong id="chip-bb-lower" class="mono">-</strong>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Gráficos Integrados TradingView -->
+                <div class="chart-viewports">
+                    <div id="candlestick-chart"></div>
+                    <div id="rsi-chart"></div>
+                </div>
+            </section>
+
+            <!-- Settings Panel -->
+            <aside class="settings-panel">
+                <div class="panel-title">
+                    <span>Configurações & Gestão de Risco</span>
+                    <span style="font-size: 0.8rem; color: var(--color-cyan);">⚡ Ativo Atual</span>
+                </div>
+
+                <form id="bot-config-form" class="settings-section">
+                    <!-- Permissão & Gatilhos Técnicos -->
+                    <div class="section-label">1. Permissão de Compra & Gatilhos do Par</div>
+
+                    <!-- Toggle Permitir Compras -->
+                    <div class="can-buy-card" id="can-buy-container">
+                        <div class="can-buy-info">
+                            <div class="form-label-with-tooltip" style="margin-bottom: 0.15rem;">
+                                <label class="form-label" style="font-weight: 700; color: #fff; cursor: pointer;"
+                                    for="cfg-can-buy">Permitir Compras para este Par</label>
+                                <div class="tooltip-container">
+                                    <span class="tooltip-icon">i</span>
+                                    <div class="tooltip-text">
+                                        Define se o bot tem autorização para realizar novas compras (Trailing Buy) nesta
+                                        moeda. Se desativado, o bot não entrará em novas operações neste par, mas
+                                        continuará gerenciando e executando normalmente o Trailing Stop / Stop Loss caso
+                                        haja uma posição em aberto.
+                                    </div>
+                                </div>
+                            </div>
+                            <span id="cfg-can-buy-status-text" class="text-green mono"
+                                style="font-size: 0.76rem; font-weight: 600;">HABILITADO (Novas compras
+                                permitidas)</span>
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="cfg-can-buy" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+
+                    <!-- Timeframe dos Gatilhos -->
+                    <div class="form-group" style="margin-bottom: 0.85rem;">
+                        <div class="form-label-with-tooltip">
+                            <label class="form-label">Período de Tempo dos Gatilhos (Timeframe)</label>
+                            <div class="tooltip-container">
+                                <span class="tooltip-icon">i</span>
+                                <div class="tooltip-text">
+                                    Define o intervalo de tempo dos candles da Binance (ex: 1m, 5m, 15m, 1h, 1d)
+                                    avaliado nos gatilhos de RSI e Bandas de Bollinger para este ativo específico. Cada
+                                    moeda pode operar em um tempo gráfico independente!
+                                </div>
+                            </div>
+                        </div>
+                        <select id="cfg-strategy-timeframe" class="form-input mono" style="font-weight: 600;">
+                            <option value="1m">1m — 1 Minuto (Escalpos Rápidos)</option>
+                            <option value="3m">3m — 3 Minutos</option>
+                            <option value="5m">5m — 5 Minutos (Day Trade Padrão)</option>
+                            <option value="15m">15m — 15 Minutos (Filtro Robusto de Ruído)</option>
+                            <option value="30m">30m — 30 Minutos</option>
+                            <option value="1h">1h — 1 Hora (Tendência / Swing)</option>
+                            <option value="2h">2h — 2 Horas</option>
+                            <option value="4h">4h — 4 Horas</option>
+                            <option value="1d">1d — 1 Dia (Posicional Diário)</option>
+                        </select>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <div class="form-label-with-tooltip">
+                                <label class="form-label">Período RSI</label>
+                                <div class="tooltip-container">
+                                    <span class="tooltip-icon">i</span>
+                                    <div class="tooltip-text">
+                                        Número de candles utilizados para calcular o RSI (Índice de Força Relativa).
+                                        Padrão oficial Binance: 14 períodos com suavização de Wilder.
+                                    </div>
+                                </div>
+                            </div>
+                            <input type="number" id="cfg-rsi-period" class="form-input" min="2" max="50" required>
+                        </div>
+                        <div class="form-group">
+                            <div class="form-label-with-tooltip">
+                                <label class="form-label">Sobrevenda RSI</label>
+                                <div class="tooltip-container">
+                                    <span class="tooltip-icon">i</span>
+                                    <div class="tooltip-text">
+                                        Nível de sobrecompra/sobrevenda. Quando o RSI cai até este valor ou menos (ex:
+                                        30), indica ativo subvalorizado e habilita o gatilho de compra.
+                                    </div>
+                                </div>
+                            </div>
+                            <input type="number" id="cfg-rsi-oversold" class="form-input" step="0.5" min="5" max="50"
+                                required>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <div class="form-label-with-tooltip">
+                                <label class="form-label">Período BB (SMA)</label>
+                                <div class="tooltip-container">
+                                    <span class="tooltip-icon">i</span>
+                                    <div class="tooltip-text">
+                                        Período da Média Móvel Simples central das Bandas de Bollinger. Padrão
+                                        Binance/TradingView: 20 candles.
+                                    </div>
+                                </div>
+                            </div>
+                            <input type="number" id="cfg-bb-period" class="form-input" min="5" max="100" required>
+                        </div>
+                        <div class="form-group">
+                            <div class="form-label-with-tooltip">
+                                <label class="form-label">Desvio Padrão BB</label>
+                                <div class="tooltip-container">
+                                    <span class="tooltip-icon">i</span>
+                                    <div class="tooltip-text">
+                                        Multiplicador de desvio padrão que define a distância das bandas superior e
+                                        inferior da média central (padrão: 2.0 desvios).
+                                    </div>
+                                </div>
+                            </div>
+                            <input type="number" id="cfg-bb-std" class="form-input" step="0.1" min="0.5" max="5.0"
+                                required>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <div class="form-label-with-tooltip">
+                            <label class="form-label">Gatilho de Ativação</label>
+                            <div class="tooltip-container">
+                                <span class="tooltip-icon">i</span>
+                                <div class="tooltip-text">
+                                    Define a condição para armar o Trailing Buy: Apenas RSI sobrevendido, apenas preço
+                                    tocando a Banda Inferior, ou ambos os sinais simultaneamente.
+                                </div>
+                            </div>
+                        </div>
+                        <select id="cfg-trigger-mode" class="form-input">
+                            <option value="both">Ambos Simultaneamente [RSI & BB Inferior]</option>
+                            <option value="rsi">Apenas Sobrevenda RSI</option>
+                            <option value="bb_lower">Apenas Preço &le; BB Inferior</option>
+                        </select>
+                    </div>
+
+                    <!-- Trailing Buy & Histerese -->
+                    <div class="section-label" style="margin-top: 0.5rem;">2. Mecânica do Trailing Buy</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <div class="form-label-with-tooltip">
+                                <label class="form-label">Delta Trailing Buy (%)</label>
+                                <div class="tooltip-container">
+                                    <span class="tooltip-icon">i</span>
+                                    <div class="tooltip-text">
+                                        Distância percentual mínima que o preço deve subir a partir da mínima registrada
+                                        (P_mín) para confirmar o repique e disparar a compra.
+                                    </div>
+                                </div>
+                            </div>
+                            <input type="number" id="cfg-tb-delta" class="form-input" step="0.05" min="0.05" max="10"
+                                required>
+                            <div id="preview-tb-delta" class="calc-preview">Calculando...</div>
+                        </div>
+
+                        <div class="form-group">
+                            <div class="form-label-with-tooltip">
+                                <label class="form-label">Histerese Compra (%)</label>
+                                <div class="tooltip-container">
+                                    <span class="tooltip-icon">i</span>
+                                    <div class="tooltip-text">
+                                        Percentual de afastamento necessário para reajustar o gatilho de compra caso o
+                                        preço continue caindo, evitando envio de ordens desnecessárias.
+                                    </div>
+                                </div>
+                            </div>
+                            <input type="number" id="cfg-buy-hyst" class="form-input" step="0.05" min="0.01" max="5"
+                                required>
+                            <div id="preview-buy-hyst" class="calc-preview hyst">Calculando...</div>
+                        </div>
+                    </div>
+
+                    <!-- Trailing Stop & Histerese -->
+                    <div class="section-label" style="margin-top: 0.5rem;">3. Mecânica do Trailing Stop</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <div class="form-label-with-tooltip">
+                                <label class="form-label">Delta Trailing Stop (%)</label>
+                                <div class="tooltip-container">
+                                    <span class="tooltip-icon">i</span>
+                                    <div class="tooltip-text">
+                                        Distância percentual máxima de recuo permitida a partir da máxima do preço antes
+                                        de executar a venda protetora a mercado.
+                                    </div>
+                                </div>
+                            </div>
+                            <input type="number" id="cfg-ts-delta" class="form-input" step="0.05" min="0.1" max="20"
+                                required>
+                            <div id="preview-ts-delta" class="calc-preview stop">Calculando...</div>
+                        </div>
+
+                        <div class="form-group">
+                            <div class="form-label-with-tooltip">
+                                <label class="form-label">Histerese Venda (%)</label>
+                                <div class="tooltip-container">
+                                    <span class="tooltip-icon">i</span>
+                                    <div class="tooltip-text">
+                                        Avanço percentual mínimo que o preço deve ter acima da máxima anterior para que
+                                        o stop móvel seja elevado. O stop NUNCA desce.
+                                    </div>
+                                </div>
+                            </div>
+                            <input type="number" id="cfg-sell-hyst" class="form-input" step="0.05" min="0.01" max="5"
+                                required>
+                            <div id="preview-sell-hyst" class="calc-preview hyst">Calculando...</div>
+                        </div>
+                    </div>
+
+                    <!-- Alocação Financeira & Martingale -->
+                    <div class="section-label" style="margin-top: 0.5rem;">4. Alocação & Risco</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <div class="form-label-with-tooltip">
+                                <label class="form-label">Ordem Base (USDT)</label>
+                                <div class="tooltip-container">
+                                    <span class="tooltip-icon">i</span>
+                                    <div class="tooltip-text">
+                                        Valor em dólares (USDT) alocado para a primeira compra do par de criptoativo.
+                                    </div>
+                                </div>
+                            </div>
+                            <input type="number" id="cfg-base-order" class="form-input" step="5" min="5" required>
+                        </div>
+                        <div class="form-group">
+                            <div class="form-label-with-tooltip">
+                                <label class="form-label">Máx Ativo (USDT)</label>
+                                <div class="tooltip-container">
+                                    <span class="tooltip-icon">i</span>
+                                    <div class="tooltip-text">
+                                        Limite financeiro máximo acumulado que pode ser mantido em posição aberta para
+                                        este par de ativo.
+                                    </div>
+                                </div>
+                            </div>
+                            <input type="number" id="cfg-max-asset" class="form-input" step="10" min="10" required>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <div class="form-label-with-tooltip">
+                            <label class="form-label">Capital Máximo Total em Aberto (USDT)</label>
+                            <div class="tooltip-container">
+                                <span class="tooltip-icon">i</span>
+                                <div class="tooltip-text">
+                                    Teto financeiro global somando todos os pares monitorados simultaneamente. Novas
+                                    ordens serão bloqueadas se ultrapassarem esse valor.
+                                </div>
+                            </div>
+                        </div>
+                        <input type="number" id="cfg-max-total" class="form-input" step="50" min="50" required>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <div class="form-label-with-tooltip">
+                                <label class="form-label">Multiplicador Queda</label>
+                                <div class="tooltip-container">
+                                    <span class="tooltip-icon">i</span>
+                                    <div class="tooltip-text">
+                                        Fator que aumenta o volume financeiro da próxima compra se o ativo continuar
+                                        caindo além do limiar, para realizar preço médio ponderado.
+                                    </div>
+                                </div>
+                            </div>
+                            <input type="number" id="cfg-drop-mult" class="form-input" step="0.05" min="1.0" max="5.0"
+                                required>
+                        </div>
+                        <div class="form-group">
+                            <div class="form-label-with-tooltip">
+                                <label class="form-label">Limiar de Queda (%)</label>
+                                <div class="tooltip-container">
+                                    <span class="tooltip-icon">i</span>
+                                    <div class="tooltip-text">
+                                        Percentual de recuo a partir da mínima de ativação que aciona o aumento de
+                                        volume pelo Multiplicador de Queda.
+                                    </div>
+                                </div>
+                            </div>
+                            <input type="number" id="cfg-drop-thresh" class="form-input" step="0.1" min="0.1" max="20"
+                                required>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn-primary" style="margin-top: 0.75rem;">Salvar Parâmetros</button>
+                </form>
+            </aside>
+        </main>
+
+        <!-- Live Orders, Positions and Trade History Tables -->
+        <section class="tables-panel">
+            <div class="table-tabs">
+                <button class="tab-btn active" data-tab="orders">
+                    Ordens Ativas <span id="badge-orders-count" class="badge-counter">0</span>
+                </button>
+                <button class="tab-btn" data-tab="positions">
+                    Posições Abertas <span id="badge-positions-count" class="badge-counter">0</span>
+                </button>
+                <button class="tab-btn" data-tab="trades">
+                    Histórico de Trades
+                </button>
+            </div>
+
+            <!-- Aba 1: Ordens Ativas -->
+            <div id="tab-orders" class="tab-content table-wrapper">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Símbolo</th>
+                            <th>Tipo de Ordem</th>
+                            <th>Lado</th>
+                            <th>Preço Gatilho</th>
+                            <th>Preço Referência (Mín/Máx)</th>
+                            <th>Volume (USDT)</th>
+                            <th>Status</th>
+                            <th>Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody id="orders-table-body">
+                        <tr>
+                            <td colspan="8" class="text-muted" style="text-align: center; padding: 2rem;">Carregando
+                                ordens...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Aba 2: Posições Abertas -->
+            <div id="tab-positions" class="tab-content table-wrapper" style="display: none;">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Símbolo</th>
+                            <th>Quantidade</th>
+                            <th>Preço Entrada</th>
+                            <th>Preço Atual</th>
+                            <th>Trailing Stop</th>
+                            <th>Total Investido</th>
+                            <th>PnL Não Realizado</th>
+                            <th>Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody id="positions-table-body">
+                        <tr>
+                            <td colspan="8" class="text-muted" style="text-align: center; padding: 2rem;">Nenhuma
+                                posição aberta.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Aba 3: Histórico de Trades -->
+            <div id="tab-trades" class="tab-content table-wrapper" style="display: none;">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Símbolo</th>
+                            <th>Preço Compra</th>
+                            <th>Preço Venda</th>
+                            <th>Quantidade (Investido)</th>
+                            <th>PnL Realizado</th>
+                            <th>Motivo da Saída</th>
+                            <th>Data / Horário</th>
+                        </tr>
+                    </thead>
+                    <tbody id="trades-table-body">
+                        <tr>
+                            <td colspan="7" class="text-muted" style="text-align: center; padding: 2rem;">Nenhum trade
+                                realizado ainda.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <!-- Modal: Adicionar Novo Par de Criptomoeda -->
+    <div id="modal-add-asset" class="modal-backdrop">
+        <div class="modal-card">
+            <div class="modal-header">
+                <div class="modal-title">
+                    <span>⚡ Adicionar Par de Criptoativo</span>
+                </div>
+                <button id="btn-close-modal-asset" class="modal-close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Digite o par de negociação na Binance (ex: <strong>ADAUSDT</strong>, <strong>XRPUSDT</strong>,
+                    <strong>DOGEUSDT</strong>, <strong>AVAXUSDT</strong> ou apenas <strong>ADA</strong>):</p>
+                <div class="form-group">
+                    <label class="form-label">Símbolo do Par</label>
+                    <input type="text" id="input-new-symbol" class="form-input mono" placeholder="Ex: ADAUSDT"
+                        style="text-transform: uppercase;">
+                </div>
+                <div style="font-size: 0.78rem; color: var(--text-dim);">
+                    O par será validado diretamente com a API pública da Binance antes de ser ativado.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="btn-cancel-add-asset" class="btn-secondary">Cancelar</button>
+                <button id="btn-confirm-add-asset" class="btn-primary">Validar & Adicionar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Confirmação de Modo Real -->
+    <div id="modal-confirm-real" class="modal-backdrop">
+        <div class="modal-card">
+            <div class="modal-header">
+                <div class="modal-title" style="color: #f59e0b;">
+                    <span>⚠️ ATENÇÃO: Ativar Modo Real</span>
+                </div>
+                <button id="btn-close-modal-real" class="modal-close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="color: #f1f5f9; font-weight: 600;">
+                    Você está prestes a ativar a execução de ordens <strong>REAIS</strong> na conta Binance Spot
+                    vinculada.
+                </p>
+                <ul style="padding-left: 1.25rem; display: flex; flex-direction: column; gap: 0.5rem;">
+                    <li>As compras e vendas serão enviadas a mercado na Binance Spot usando suas chaves de API.</li>
+                    <li>Certifique-se de que os limites de capital no painel de gestão de risco estão adequados.</li>
+                    <li>As chaves <code class="mono" style="color: var(--color-cyan);">BINANCE_API_KEY</code> e <code
+                            class="mono" style="color: var(--color-cyan);">BINANCE_API_SECRET</code> devem estar
+                        preenchidas no arquivo <code class="mono">.env</code>.</li>
+                </ul>
+            </div>
+            <div class="modal-footer">
+                <button id="btn-cancel-real-mode" class="btn-secondary">Manter Simulação</button>
+                <button id="btn-confirm-real-mode" class="btn-primary"
+                    style="background: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%); color: white;">
+                    Sim, Ativar Modo Real
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Gerenciador de Pares & Gatilhos -->
+    <div id="modal-manage-pairs" class="modal-backdrop">
+        <div class="modal-card" style="max-width: 720px; width: 95%;">
+            <div class="modal-header">
+                <div class="modal-title">
+                    <span>⚙️ Gerenciador de Pares & Gatilhos</span>
+                </div>
+                <button id="btn-close-modal-pairs" class="modal-close-btn">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 1.25rem 1.5rem; max-height: 65vh; overflow-y: auto;">
+                <p style="font-size: 0.82rem; color: var(--text-dim); margin-bottom: 0.85rem;">
+                    Configure quais moedas o bot está autorizado a comprar e defina o período de tempo (timeframe) dos
+                    candles utilizado para avaliar os gatilhos técnicos (RSI e Bandas de Bollinger) de cada par.
+                </p>
+                <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap;">
+                    <button id="btn-bulk-enable-buy" class="btn-secondary"
+                        style="font-size: 0.78rem; padding: 0.4rem 0.75rem;">Liberar Compras em Todos</button>
+                    <button id="btn-bulk-disable-buy" class="btn-secondary"
+                        style="font-size: 0.78rem; padding: 0.4rem 0.75rem; color: var(--color-red); border-color: rgba(255, 56, 92, 0.3);">Bloquear
+                        Compras em Todos</button>
+                </div>
+                <div class="table-container" style="border: 1px solid var(--border-color); border-radius: 8px;">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Par de Ativo</th>
+                                <th style="text-align: center;">Permitir Compra</th>
+                                <th>Período do Gatilho</th>
+                                <th style="text-align: center;">Posição Aberta</th>
+                            </tr>
+                        </thead>
+                        <tbody id="manage-pairs-table-body">
+                            <!-- Preenchido dinamicamente via JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="btn-cancel-manage-pairs" class="btn-secondary">Cancelar</button>
+                <button id="btn-save-manage-pairs" class="btn-primary">Salvar Alterações</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Container de Notificações Toast -->
+    <div id="toast-container"></div>
+
+    <!-- Script da Aplicação -->
+    <script src="/static/js/chart.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+
+</html>
