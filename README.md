@@ -1,6 +1,6 @@
 # ⚡ BOT DE MONITORAMENTO E TRADING QUANTITATIVO (BINANCE)
 
-Aplicação profissional de monitoramento em tempo real, backtesting dinâmico e execução simulada (**Paper Trading**) de criptoativos integrada diretamente à API e WebSockets da Binance.
+Aplicação de monitoramento em tempo real, backtesting dinâmico e execução simulada (**Paper Trading**) de criptoativos integrada diretamente à API e WebSockets da Binance.
 
 Construída com **Python 3.11+, Flask, Flask-SocketIO, SQLAlchemy, PostgreSQL, Pandas/NumPy e TradingView Lightweight Charts**.
 
