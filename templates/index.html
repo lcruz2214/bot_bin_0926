@@ -307,15 +307,15 @@
                             <div class="tooltip-container">
                                 <span class="tooltip-icon">i</span>
                                 <div class="tooltip-text">
-                                    Define a condição para armar o Trailing Buy: Apenas RSI sobrevendido, apenas preço
-                                    tocando a Banda Inferior, ou ambos os sinais simultaneamente.
+                                    Define a condição para armar o Trailing Buy: Qualquer um dos sinais (RSI sobrevendido OU Preço &le; Banda Inferior), apenas RSI, apenas Banda Inferior, ou ambos simultaneamente (AND).
                                 </div>
                             </div>
                         </div>
                         <select id="cfg-trigger-mode" class="form-input">
-                            <option value="both">Ambos Simultaneamente [RSI & BB Inferior]</option>
+                            <option value="or">Qualquer um [RSI OU BB Inferior] (Operação OR)</option>
                             <option value="rsi">Apenas Sobrevenda RSI</option>
                             <option value="bb_lower">Apenas Preço &le; BB Inferior</option>
+                            <option value="and">Ambos Simultaneamente [RSI & BB Inferior] (Operação AND)</option>
                         </select>
                     </div>
 

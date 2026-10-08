@@ -138,6 +138,12 @@ class DatabaseHandler:
                 )
                 session.add(global_cfg)
 
+            # Migração suave: atualizar configurações legadas com 'both' para 'or'
+            session.query(BotConfig).filter(BotConfig.activation_trigger == "both").update(
+                {BotConfig.activation_trigger: "or"},
+                synchronize_session=False
+            )
+
             session.commit()
             logger.info("Tabelas e registros iniciais configurados com sucesso.")
 

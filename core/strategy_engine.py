@@ -19,24 +19,32 @@ class StrategyEngine:
 
     def check_activation_condition(self, price: float, indicators: Dict[str, Optional[float]], config: Dict[str, Any]) -> bool:
         """
-        Verifica se a condição de ativação configurada (RSI, Banda Inferior ou Ambos) foi atendida.
+        Verifica se a condição de ativação configurada foi atendida:
+        - 'or' (padrão): Preço <= BB Inferior OU RSI <= Sobrevenda (Operação OR)
+        - 'rsi': Apenas RSI <= Sobrevenda
+        - 'bb_lower': Apenas Preço <= BB Inferior
+        - 'and': Preço <= BB Inferior E RSI <= Sobrevenda simultaneamente (Operação AND)
         """
         rsi = indicators.get("rsi")
         bb_lower = indicators.get("bb_lower")
-        trigger_mode = config.get("activation_trigger", "both")
+        trigger_mode = config.get("activation_trigger", "or")
         rsi_oversold = config.get("rsi_oversold", 30.0)
 
-        if rsi is None or bb_lower is None or price is None:
+        if price is None:
             return False
 
-        rsi_condition = (rsi <= rsi_oversold)
-        bb_condition = (price <= bb_lower)
+        rsi_condition = (rsi is not None and rsi <= rsi_oversold)
+        bb_condition = (bb_lower is not None and price <= bb_lower)
 
-        if trigger_mode == "rsi":
+        if trigger_mode in ("or", "either", "both"):
+            # Operação OR: ativa se Banda Inferior OU RSI atingirem a condição
+            return rsi_condition or bb_condition
+        elif trigger_mode == "rsi":
             return rsi_condition
         elif trigger_mode == "bb_lower":
             return bb_condition
-        elif trigger_mode == "both":
+        elif trigger_mode in ("and",):
+            # Operação AND: exige ambos simultaneamente
             return rsi_condition and bb_condition
         return False
 

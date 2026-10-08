@@ -38,9 +38,42 @@ class TestCryptoBot(unittest.TestCase):
         self.assertTrue(latest["bb_upper"] >= latest["bb_middle"] >= latest["bb_lower"])
         print(f"[TEST PASS] Indicadores calculados com sucesso: RSI={latest['rsi']}, BB_Mid={latest['bb_middle']}")
 
+    def test_activation_trigger_modes(self):
+        """Valida que o gatilho padrão 'or' opera como OR (Banda Inferior OU RSI)"""
+        cfg_or = {"activation_trigger": "or", "rsi_oversold": 30.0}
+        cfg_rsi = {"activation_trigger": "rsi", "rsi_oversold": 30.0}
+        cfg_bb = {"activation_trigger": "bb_lower", "rsi_oversold": 30.0}
+        cfg_and = {"activation_trigger": "and", "rsi_oversold": 30.0}
+
+        # Cenário 1: Apenas RSI sobrevendido (RSI=25, Preço=100 > BB=95)
+        ind_only_rsi = {"rsi": 25.0, "bb_lower": 95.0}
+        self.assertTrue(self.strategy.check_activation_condition(100.0, ind_only_rsi, cfg_or))
+        self.assertTrue(self.strategy.check_activation_condition(100.0, ind_only_rsi, cfg_rsi))
+        self.assertFalse(self.strategy.check_activation_condition(100.0, ind_only_rsi, cfg_bb))
+        self.assertFalse(self.strategy.check_activation_condition(100.0, ind_only_rsi, cfg_and))
+
+        # Cenário 2: Apenas BB Inferior atingida (RSI=45, Preço=90 <= BB=95)
+        ind_only_bb = {"rsi": 45.0, "bb_lower": 95.0}
+        self.assertTrue(self.strategy.check_activation_condition(90.0, ind_only_bb, cfg_or))
+        self.assertFalse(self.strategy.check_activation_condition(90.0, ind_only_bb, cfg_rsi))
+        self.assertTrue(self.strategy.check_activation_condition(90.0, ind_only_bb, cfg_bb))
+        self.assertFalse(self.strategy.check_activation_condition(90.0, ind_only_bb, cfg_and))
+
+        # Cenário 3: Nenhum critério atingido (RSI=50, Preço=100 > BB=95)
+        ind_none = {"rsi": 50.0, "bb_lower": 95.0}
+        self.assertFalse(self.strategy.check_activation_condition(100.0, ind_none, cfg_or))
+        self.assertFalse(self.strategy.check_activation_condition(100.0, ind_none, cfg_rsi))
+        self.assertFalse(self.strategy.check_activation_condition(100.0, ind_none, cfg_bb))
+        self.assertFalse(self.strategy.check_activation_condition(100.0, ind_none, cfg_and))
+
+        # Cenário 4: Ambos atingidos (RSI=20, Preço=90 <= BB=95)
+        ind_both = {"rsi": 20.0, "bb_lower": 95.0}
+        self.assertTrue(self.strategy.check_activation_condition(90.0, ind_both, cfg_or))
+        self.assertTrue(self.strategy.check_activation_condition(90.0, ind_both, cfg_and))
+        print("[TEST PASS] Modos de gatilho de ativação (OR, RSI, BB_LOWER, AND) validados com sucesso!")
+
     def test_trailing_buy_and_trailing_stop_workflow(self):
         sym = "BTCUSDT"
-        cfg = db.get_config(sym)
 
         # Persiste parâmetros no banco para o teste
         test_params = {
@@ -49,7 +82,7 @@ class TestCryptoBot(unittest.TestCase):
             "trailing_stop_delta": 0.02, # 2%
             "sell_hysteresis": 0.002,     # 0.2%
             "base_order_usdt": 100.0,
-            "activation_trigger": "both",
+            "activation_trigger": "or",
             "rsi_oversold": 30.0,
             "can_buy": True,
             "is_bot_running": True
@@ -58,8 +91,10 @@ class TestCryptoBot(unittest.TestCase):
 
         # Limpa ordens e posições anteriores do ativo
         db.cancel_active_orders(sym)
-        existing_pos = db.get_open_position(sym)
-        if existing_pos:
+        while True:
+            existing_pos = db.get_open_position(sym)
+            if not existing_pos:
+                break
             db.close_position(sym, existing_pos["current_price"], "CLEANUP")
 
         # 1. Condição de sobrevenda: Preço=90, BB_Lower=95, RSI=25 -> Ativa Trailing Buy

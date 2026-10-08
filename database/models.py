@@ -54,7 +54,7 @@ class BotConfig(Base):
     rsi_overbought = Column(Float, default=70.0)
     bb_period = Column(Integer, default=20)
     bb_std = Column(Float, default=2.0)
-    activation_trigger = Column(String(20), default="both")  # 'rsi', 'bb_lower', 'both'
+    activation_trigger = Column(String(20), default="or")  # 'or', 'rsi', 'bb_lower', 'and'
 
     # Mecânica Trailing Buy & Trailing Stop
     trailing_buy_delta = Column(Float, default=0.005)      # 0.5%

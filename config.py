@@ -48,8 +48,8 @@ class Config:
     DEFAULT_BB_PERIOD = 20
     DEFAULT_BB_STD = 2.0
     
-    # Gatilho de Ativação: 'rsi', 'bb_lower', 'both'
-    DEFAULT_ACTIVATION_TRIGGER = "both"
+    # Gatilho de Ativação: 'or' (RSI OU BB Inferior), 'rsi', 'bb_lower', 'and' (Ambos simultaneamente)
+    DEFAULT_ACTIVATION_TRIGGER = "or"
 
     # Mecânica Trailing Buy & Trailing Stop Padrão
     DEFAULT_TRAILING_BUY_DELTA = 0.005       # 0.5% acima da mínima

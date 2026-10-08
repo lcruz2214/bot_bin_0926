@@ -190,8 +190,9 @@ document.addEventListener("DOMContentLoaded", () => {
                 rsiPeriodInput.value = c.rsi_period;
                 rsiOversoldInput.value = c.rsi_oversold;
                 bbPeriodInput.value = c.bb_period;
-                bbStdInput.value = c.bb_std;
-                triggerModeSelect.value = c.activation_trigger;
+                let triggerVal = c.activation_trigger;
+                if (triggerVal === "both") triggerVal = "or";
+                triggerModeSelect.value = triggerVal || "or";
                 trailingBuyDeltaInput.value = (c.trailing_buy_delta * 100).toFixed(2);
                 buyHysteresisInput.value = (c.buy_hysteresis * 100).toFixed(2);
                 trailingStopDeltaInput.value = (c.trailing_stop_delta * 100).toFixed(2);

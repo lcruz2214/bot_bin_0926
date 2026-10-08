@@ -23,8 +23,7 @@ Você é um engenheiro de software sênior especialista em Python, sistemas ass�
    * Linhas horizontais dinâmicas no gráfico mostrando: Ordens ativas de Trailing Buy, Ordens de Trailing Stop e Preço Médio de Posição.
 3. **Painel de Configurações Técnicas e de Risco (editáveis por ativo e globais):**
    * Período do RSI e Nível de Sobrevenda.
-   * Período da Média e Multiplicador de Desvio da Banda de Bollinger.
-   * Gatilho de Ativação: `[RSI]` OU `[Banda Inferior]` OU `[Ambos simultaneamente]`.
+   * Gatilho de Ativação: `[Qualquer um (RSI OU Banda Inferior - OR)]` (Padrão) OU `[Apenas RSI]` OU `[Apenas Banda Inferior]` OU `[Ambos simultaneamente (AND)]`.
    * Delta do Trailing Buy (% de distância do preço de compra em relação à mínima/referência).
    * Histerese de Ajuste de Compra (% de afastamento para reajuste de ordem).
    * Delta do Trailing Stop (% de recuo permitido antes da venda a mercado).
