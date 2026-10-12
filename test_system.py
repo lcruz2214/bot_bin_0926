@@ -14,7 +14,7 @@ class TestCryptoBot(unittest.TestCase):
     def setUp(self):
         self.order_manager = OrderManager(socketio_emitter=lambda e, d: None)
         self.strategy = StrategyEngine(order_manager=self.order_manager)
-        self.market_stream = BinanceMarketStream(symbols=["BTCUSDT", "ETHUSDT"])
+        self.market_stream = BinanceMarketStream(symbols=[])
         self.recovery = RecoveryManager(
             order_manager=self.order_manager,
             strategy_engine=self.strategy,
@@ -80,7 +80,8 @@ class TestCryptoBot(unittest.TestCase):
         print("[TEST PASS] Modos de gatilho de ativação (OR, RSI, BB_LOWER, AND) validados com sucesso!")
 
     def test_trailing_buy_and_trailing_stop_workflow(self):
-        sym = "BTCUSDT"
+        sym = "TEST_FLOW_USDT"
+        db.add_asset(sym)
 
         test_params = {
             "trailing_buy_delta": 0.01,  # 1%
@@ -98,6 +99,7 @@ class TestCryptoBot(unittest.TestCase):
         }
         db.update_config(sym, test_params)
         db.cancel_active_orders(sym)
+        db.clear_trailing_state(sym)
 
         while True:
             existing_pos = db.get_open_position(sym)
@@ -143,11 +145,12 @@ class TestCryptoBot(unittest.TestCase):
         self.strategy.evaluate_tick(sym, 97.5, ind_normal)
         pos = db.get_open_position(sym)
         self.assertIsNone(pos)
+        db.delete_asset(sym)
         print("[TEST PASS] Workflow completo de Trailing Buy e Trailing Stop validado com sucesso!")
 
     def test_pair_deletion_and_open_position_protection(self):
         """Valida adição e exclusão de pares, impedindo exclusão de ativo com posição aberta (USER REQUEST)."""
-        test_sym = "TESTUSDT"
+        test_sym = "TEST_DEL_USDT"
         db.add_asset(test_sym)
         self.assertIn(test_sym, db.get_active_symbols())
 
@@ -173,20 +176,17 @@ class TestCryptoBot(unittest.TestCase):
 
     def test_kill_switch_and_operational_hierarchy(self):
         """Valida a Parada de Emergência (Kill Switch) e Hierarquia Operacional (RF-KILL / RF-14)."""
-        # Ativa Kill Switch
         db.set_kill_switch(active=True, mode="PARADA_OPERACIONAL", reason="Teste Unitário")
         status = db.get_operational_status()
         self.assertEqual(status["level"], "EMERGENCIA")
         self.assertEqual(status["status"], "KILL_SWITCH")
         self.assertFalse(status["can_buy"])
 
-        # Tenta executar compra enquanto Kill Switch está ativo -> Deve ser rejeitada
         cfg = {"max_order_amount_usdt": 150.0, "max_asset_allocation_usdt": 500.0, "max_entries_count": 5}
-        allowed, reason = self.order_manager.check_risk_limits("BTCUSDT", requested_amount_usdt=50.0, config=cfg)
+        allowed, reason = self.order_manager.check_risk_limits("TEST_KS_USDT", requested_amount_usdt=50.0, config=cfg)
         self.assertFalse(allowed)
         self.assertIn("Hierarquia", reason)
 
-        # Desativa Kill Switch
         db.set_kill_switch(active=False)
         status_after = db.get_operational_status()
         self.assertNotEqual(status_after["status"], "KILL_SWITCH")
@@ -195,45 +195,42 @@ class TestCryptoBot(unittest.TestCase):
     def test_progressive_exposure_and_risk_limits(self):
         """Valida limites do Aumento Progressivo de Exposição (RF-RISCO-004, 005, 006)."""
         cfg = {
-            "max_order_amount_usdt": 100.0,      # Limite por entrada
-            "max_entries_count": 3,              # Máximo 3 entradas
-            "max_asset_allocation_usdt": 250.0,  # Exposição máxima no ativo
+            "max_order_amount_usdt": 100.0,
+            "max_entries_count": 3,
+            "max_asset_allocation_usdt": 250.0,
             "max_total_open_capital_usdt": 1000.0
         }
 
         # 1. Entrada individual excedendo teto de ordem -> Bloqueada (RF-RISCO-004)
-        allowed, reason = self.order_manager.check_risk_limits("BTCUSDT", requested_amount_usdt=150.0, config=cfg, entry_number=1)
+        allowed, reason = self.order_manager.check_risk_limits("TEST_RISK_USDT", requested_amount_usdt=150.0, config=cfg, entry_number=1)
         self.assertFalse(allowed)
         self.assertIn("RF-RISCO-004", reason)
 
         # 2. Entrada dentro dos limites -> Permitida
-        allowed, reason = self.order_manager.check_risk_limits("BTCUSDT", requested_amount_usdt=80.0, config=cfg, entry_number=1)
+        allowed, reason = self.order_manager.check_risk_limits("TEST_RISK_USDT", requested_amount_usdt=80.0, config=cfg, entry_number=1)
         self.assertTrue(allowed)
 
         # 3. Excedendo quantidade máxima de entradas -> Bloqueada (RF-RISCO-006)
-        allowed, reason = self.order_manager.check_risk_limits("BTCUSDT", requested_amount_usdt=80.0, config=cfg, entry_number=4)
+        allowed, reason = self.order_manager.check_risk_limits("TEST_RISK_USDT", requested_amount_usdt=80.0, config=cfg, entry_number=4)
         self.assertFalse(allowed)
         self.assertIn("RF-RISCO-006", reason)
         print("[TEST PASS] Limites de Aumento Progressivo de Exposição (RF-RISCO) validados com sucesso!")
 
     def test_recovery_manager_state_reconstruction(self):
         """Valida que o Gerenciador de Recuperação reconstrói o estado após reinício (RF-REC-002/005)."""
-        sym = "ETHUSDT"
+        sym = "TEST_REC_USDT"
+        db.add_asset(sym)
         db.cancel_active_orders(sym)
 
-        # Simula posição aberta existente no banco
         db.save_position(sym, quantity=2.0, entry_price=3000.0, trailing_stop_price=2940.0)
 
-        # Salva Trailing Buy persistido
         db.save_trailing_state(
             sym, trailing_type="BUY", reference_price=2800.0, trigger_price=2820.0,
             delta=0.01, hysteresis=0.002, allocated_usdt=100.0
         )
 
-        # Limpa memória simulando reinicialização do processo
         self.strategy.active_trailing_buys.clear()
 
-        # Executa recuperação
         recovery_results = self.recovery.run_recovery()
         self.assertTrue(recovery_results["recovered_positions"] >= 1)
         self.assertIn(sym, self.strategy.active_trailing_buys)
@@ -241,14 +238,15 @@ class TestCryptoBot(unittest.TestCase):
         self.assertEqual(recovered_tb["p_min"], 2800.0)
         self.assertEqual(recovered_tb["p_buy"], 2820.0)
 
-        # Cleanup
         db.close_position(sym, exit_price=3050.0, exit_reason="TEST_RECOVERY_CLEANUP")
         db.clear_trailing_state(sym)
+        db.delete_asset(sym)
         print("[TEST PASS] Gerenciador de Recuperação (RF-REC) validado com sucesso!")
 
     def test_explain_decision_mode(self):
         """Valida o Modo Explicar produzindo diagnóstico em linguagem humana sem alterar estado (RF-EXPLAIN)."""
-        sym = "BTCUSDT"
+        sym = "TEST_EXP_USDT"
+        db.add_asset(sym)
         indicators = {"rsi": 28.5, "bb_lower": 65000.0, "bb_upper": 68000.0}
         exp = self.strategy.explain_decision(sym, current_price=64800.0, indicators=indicators)
 
@@ -256,11 +254,13 @@ class TestCryptoBot(unittest.TestCase):
         self.assertIn("details", exp)
         self.assertEqual(exp["symbol"], sym)
         self.assertTrue(len(exp["details"]) > 0)
+        db.delete_asset(sym)
         print(f"[TEST PASS] Modo Explicar validado com sucesso! Resumo: {exp['summary']}")
 
     def test_trailing_stop_strictly_never_decreases(self):
         """Valida garantia estrita de que o Stop NUNCA retrocede (RF-TRAIL-003)."""
-        sym = "SOLUSDT"
+        sym = "TEST_STOP_USDT"
+        db.add_asset(sym)
         db.save_position(sym, quantity=5.0, entry_price=100.0, trailing_stop_price=95.0)
 
         # Tenta diminuir o stop para 92.0 -> NÃO PODE DIMINUIR
@@ -271,8 +271,8 @@ class TestCryptoBot(unittest.TestCase):
         pos = db.update_position_price(sym, current_price=105.0, new_trailing_stop=98.0)
         self.assertEqual(pos["trailing_stop_price"], 98.0)
 
-        # Cleanup
         db.close_position(sym, exit_price=98.0, exit_reason="TEST_STOP_CLEANUP")
+        db.delete_asset(sym)
         print("[TEST PASS] Regra RF-TRAIL-003 garantida: Stop estritamente nunca diminui!")
 
 if __name__ == "__main__":
