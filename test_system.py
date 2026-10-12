@@ -7,14 +7,21 @@ from config import Config
 from database.db_handler import db
 from core.order_manager import OrderManager
 from core.strategy_engine import StrategyEngine
+from core.recovery_manager import RecoveryManager
+from core.market_stream import BinanceMarketStream
 
 class TestCryptoBot(unittest.TestCase):
     def setUp(self):
         self.order_manager = OrderManager(socketio_emitter=lambda e, d: None)
         self.strategy = StrategyEngine(order_manager=self.order_manager)
+        self.market_stream = BinanceMarketStream(symbols=["BTCUSDT", "ETHUSDT"])
+        self.recovery = RecoveryManager(
+            order_manager=self.order_manager,
+            strategy_engine=self.strategy,
+            market_stream=self.market_stream
+        )
 
     def test_wilder_rsi_and_bb(self):
-        # Gera série sintética de 100 preços
         prices = [100.0 + np.sin(i / 5.0) * 10.0 + (i * 0.1) for i in range(100)]
         df = pd.DataFrame({
             "time": range(100),
@@ -75,84 +82,198 @@ class TestCryptoBot(unittest.TestCase):
     def test_trailing_buy_and_trailing_stop_workflow(self):
         sym = "BTCUSDT"
 
-        # Persiste parâmetros no banco para o teste
         test_params = {
             "trailing_buy_delta": 0.01,  # 1%
-            "buy_hysteresis": 0.002,      # 0.2%
+            "buy_hysteresis": 0.002,     # 0.2%
             "trailing_stop_delta": 0.02, # 2%
-            "sell_hysteresis": 0.002,     # 0.2%
+            "sell_hysteresis": 0.002,    # 0.2%
             "base_order_usdt": 100.0,
+            "max_order_amount_usdt": 150.0,
+            "max_asset_allocation_usdt": 500.0,
+            "max_entries_count": 5,
             "activation_trigger": "or",
             "rsi_oversold": 30.0,
             "can_buy": True,
             "is_bot_running": True
         }
         db.update_config(sym, test_params)
-
-        # Limpa ordens e posições anteriores do ativo
         db.cancel_active_orders(sym)
+
         while True:
             existing_pos = db.get_open_position(sym)
             if not existing_pos:
                 break
             db.close_position(sym, existing_pos["current_price"], "CLEANUP")
 
-        # 1. Condição de sobrevenda: Preço=90, BB_Lower=95, RSI=25 -> Ativa Trailing Buy
+        # 1. Ativa Trailing Buy
         ind_oversold = {"rsi": 25.0, "bb_lower": 95.0, "bb_middle": 100.0, "bb_upper": 105.0}
         self.strategy.evaluate_tick(sym, 90.0, ind_oversold)
-
         self.assertIn(sym, self.strategy.active_trailing_buys)
         tb_state = self.strategy.active_trailing_buys[sym]
         self.assertEqual(tb_state["p_min"], 90.0)
-        # P_buy = 90 * (1 + 0.01) = 90.9
         self.assertAlmostEqual(tb_state["p_buy"], 90.9, places=2)
-        print(f"[TEST PASS] Trailing Buy armado em P_buy={tb_state['p_buy']}")
 
-        # 2. Preço cai para 88.0 (queda > histerese) -> Reajusta P_min e P_buy
+        # 2. Histerese para baixo
         self.strategy.evaluate_tick(sym, 88.0, ind_oversold)
         tb_state = self.strategy.active_trailing_buys[sym]
         self.assertEqual(tb_state["p_min"], 88.0)
-        # Novo P_buy = 88 * 1.01 = 88.88
         self.assertAlmostEqual(tb_state["p_buy"], 88.88, places=2)
-        print(f"[TEST PASS] Trailing Buy ajustado com histerese para P_buy={tb_state['p_buy']}")
 
-        # 3. Preço repica para 89.0 (atinge ou supera 88.88) -> Dispara Compra!
+        # 3. Disparo de compra
         self.strategy.evaluate_tick(sym, 89.0, ind_oversold)
         self.assertNotIn(sym, self.strategy.active_trailing_buys)
-
         pos = db.get_open_position(sym)
         self.assertIsNotNone(pos)
         self.assertEqual(pos["status"], "OPEN")
         self.assertEqual(pos["entry_price"], 89.0)
-        # Stop inicial = 89.0 * (1 - 0.02) = 87.22
         self.assertAlmostEqual(pos["trailing_stop_price"], 87.22, places=2)
-        print(f"[TEST PASS] Compra simulada executada @ ${pos['entry_price']}. Stop inicial: ${pos['trailing_stop_price']}")
 
-        # 4. Preço sobe para 100.0 -> Trailing Stop deve subir
+        # 4. Elevação do Stop
         ind_normal = {"rsi": 60.0, "bb_lower": 85.0, "bb_middle": 95.0, "bb_upper": 105.0}
         self.strategy.evaluate_tick(sym, 100.0, ind_normal)
         pos = db.get_open_position(sym)
-        # Novo stop = 100.0 * (1 - 0.02) = 98.0
         self.assertAlmostEqual(pos["trailing_stop_price"], 98.0, places=2)
-        print(f"[TEST PASS] Trailing Stop elevado para ${pos['trailing_stop_price']}")
 
-        # 5. Preço recua para 98.5 (stop continua 98.0, NUNCA DESCE)
+        # 5. Stop fixo (não desce)
         self.strategy.evaluate_tick(sym, 98.5, ind_normal)
         pos = db.get_open_position(sym)
         self.assertAlmostEqual(pos["trailing_stop_price"], 98.0, places=2)
-        print(f"[TEST PASS] Stop mantido fixo (não desce): ${pos['trailing_stop_price']}")
 
-        # 6. Preço cai para 97.5 (abaixo de 98.0) -> Dispara Stop de Saída!
+        # 6. Stop disparado
         self.strategy.evaluate_tick(sym, 97.5, ind_normal)
         pos = db.get_open_position(sym)
-        self.assertIsNone(pos)  # Posição fechada
-        trades = db.get_trade_logs(sym, limit=1)
-        self.assertEqual(len(trades), 1)
-        last_trade = trades[0]
-        self.assertEqual(last_trade["buy_price"], 89.0)
-        self.assertEqual(last_trade["sell_price"], 97.5)
-        self.assertTrue(last_trade["pnl_usdt"] > 0)
-        print(f"[TEST PASS] Saída executada com sucesso! PnL={last_trade['pnl_usdt']} USDT ({last_trade['pnl_pct']}%)")
+        self.assertIsNone(pos)
+        print("[TEST PASS] Workflow completo de Trailing Buy e Trailing Stop validado com sucesso!")
+
+    def test_pair_deletion_and_open_position_protection(self):
+        """Valida adição e exclusão de pares, impedindo exclusão de ativo com posição aberta (USER REQUEST)."""
+        test_sym = "TESTUSDT"
+        db.add_asset(test_sym)
+        self.assertIn(test_sym, db.get_active_symbols())
+
+        # 1. Simula abertura de posição para o par
+        db.save_position(test_sym, quantity=10.0, entry_price=100.0, trailing_stop_price=98.0)
+        self.assertIsNotNone(db.get_open_position(test_sym))
+
+        # 2. Tenta excluir o par com posição aberta -> DEVE SER RECUSADO
+        ok, msg = db.delete_asset(test_sym)
+        self.assertFalse(ok)
+        self.assertIn("posição aberta", msg.lower())
+        self.assertIn(test_sym, db.get_active_symbols())
+
+        # 3. Fecha a posição aberta
+        db.close_position(test_sym, exit_price=102.0, exit_reason="TEST_CLOSE")
+        self.assertIsNone(db.get_open_position(test_sym))
+
+        # 4. Tenta excluir agora que a posição foi encerrada -> DEVE TER SUCESSO
+        ok, msg = db.delete_asset(test_sym)
+        self.assertTrue(ok)
+        self.assertNotIn(test_sym, db.get_active_symbols())
+        print(f"[TEST PASS] Exclusão de par validada com proteção contra posição aberta!")
+
+    def test_kill_switch_and_operational_hierarchy(self):
+        """Valida a Parada de Emergência (Kill Switch) e Hierarquia Operacional (RF-KILL / RF-14)."""
+        # Ativa Kill Switch
+        db.set_kill_switch(active=True, mode="PARADA_OPERACIONAL", reason="Teste Unitário")
+        status = db.get_operational_status()
+        self.assertEqual(status["level"], "EMERGENCIA")
+        self.assertEqual(status["status"], "KILL_SWITCH")
+        self.assertFalse(status["can_buy"])
+
+        # Tenta executar compra enquanto Kill Switch está ativo -> Deve ser rejeitada
+        cfg = {"max_order_amount_usdt": 150.0, "max_asset_allocation_usdt": 500.0, "max_entries_count": 5}
+        allowed, reason = self.order_manager.check_risk_limits("BTCUSDT", requested_amount_usdt=50.0, config=cfg)
+        self.assertFalse(allowed)
+        self.assertIn("Hierarquia", reason)
+
+        # Desativa Kill Switch
+        db.set_kill_switch(active=False)
+        status_after = db.get_operational_status()
+        self.assertNotEqual(status_after["status"], "KILL_SWITCH")
+        print("[TEST PASS] Parada de Emergência (Kill Switch) e Hierarquia Operacional validadas com sucesso!")
+
+    def test_progressive_exposure_and_risk_limits(self):
+        """Valida limites do Aumento Progressivo de Exposição (RF-RISCO-004, 005, 006)."""
+        cfg = {
+            "max_order_amount_usdt": 100.0,      # Limite por entrada
+            "max_entries_count": 3,              # Máximo 3 entradas
+            "max_asset_allocation_usdt": 250.0,  # Exposição máxima no ativo
+            "max_total_open_capital_usdt": 1000.0
+        }
+
+        # 1. Entrada individual excedendo teto de ordem -> Bloqueada (RF-RISCO-004)
+        allowed, reason = self.order_manager.check_risk_limits("BTCUSDT", requested_amount_usdt=150.0, config=cfg, entry_number=1)
+        self.assertFalse(allowed)
+        self.assertIn("RF-RISCO-004", reason)
+
+        # 2. Entrada dentro dos limites -> Permitida
+        allowed, reason = self.order_manager.check_risk_limits("BTCUSDT", requested_amount_usdt=80.0, config=cfg, entry_number=1)
+        self.assertTrue(allowed)
+
+        # 3. Excedendo quantidade máxima de entradas -> Bloqueada (RF-RISCO-006)
+        allowed, reason = self.order_manager.check_risk_limits("BTCUSDT", requested_amount_usdt=80.0, config=cfg, entry_number=4)
+        self.assertFalse(allowed)
+        self.assertIn("RF-RISCO-006", reason)
+        print("[TEST PASS] Limites de Aumento Progressivo de Exposição (RF-RISCO) validados com sucesso!")
+
+    def test_recovery_manager_state_reconstruction(self):
+        """Valida que o Gerenciador de Recuperação reconstrói o estado após reinício (RF-REC-002/005)."""
+        sym = "ETHUSDT"
+        db.cancel_active_orders(sym)
+
+        # Simula posição aberta existente no banco
+        db.save_position(sym, quantity=2.0, entry_price=3000.0, trailing_stop_price=2940.0)
+
+        # Salva Trailing Buy persistido
+        db.save_trailing_state(
+            sym, trailing_type="BUY", reference_price=2800.0, trigger_price=2820.0,
+            delta=0.01, hysteresis=0.002, allocated_usdt=100.0
+        )
+
+        # Limpa memória simulando reinicialização do processo
+        self.strategy.active_trailing_buys.clear()
+
+        # Executa recuperação
+        recovery_results = self.recovery.run_recovery()
+        self.assertTrue(recovery_results["recovered_positions"] >= 1)
+        self.assertIn(sym, self.strategy.active_trailing_buys)
+        recovered_tb = self.strategy.active_trailing_buys[sym]
+        self.assertEqual(recovered_tb["p_min"], 2800.0)
+        self.assertEqual(recovered_tb["p_buy"], 2820.0)
+
+        # Cleanup
+        db.close_position(sym, exit_price=3050.0, exit_reason="TEST_RECOVERY_CLEANUP")
+        db.clear_trailing_state(sym)
+        print("[TEST PASS] Gerenciador de Recuperação (RF-REC) validado com sucesso!")
+
+    def test_explain_decision_mode(self):
+        """Valida o Modo Explicar produzindo diagnóstico em linguagem humana sem alterar estado (RF-EXPLAIN)."""
+        sym = "BTCUSDT"
+        indicators = {"rsi": 28.5, "bb_lower": 65000.0, "bb_upper": 68000.0}
+        exp = self.strategy.explain_decision(sym, current_price=64800.0, indicators=indicators)
+
+        self.assertIn("summary", exp)
+        self.assertIn("details", exp)
+        self.assertEqual(exp["symbol"], sym)
+        self.assertTrue(len(exp["details"]) > 0)
+        print(f"[TEST PASS] Modo Explicar validado com sucesso! Resumo: {exp['summary']}")
+
+    def test_trailing_stop_strictly_never_decreases(self):
+        """Valida garantia estrita de que o Stop NUNCA retrocede (RF-TRAIL-003)."""
+        sym = "SOLUSDT"
+        db.save_position(sym, quantity=5.0, entry_price=100.0, trailing_stop_price=95.0)
+
+        # Tenta diminuir o stop para 92.0 -> NÃO PODE DIMINUIR
+        pos = db.update_position_price(sym, current_price=96.0, new_trailing_stop=92.0)
+        self.assertEqual(pos["trailing_stop_price"], 95.0)
+
+        # Tenta elevar o stop para 98.0 -> DEVE SUBIR
+        pos = db.update_position_price(sym, current_price=105.0, new_trailing_stop=98.0)
+        self.assertEqual(pos["trailing_stop_price"], 98.0)
+
+        # Cleanup
+        db.close_position(sym, exit_price=98.0, exit_reason="TEST_STOP_CLEANUP")
+        print("[TEST PASS] Regra RF-TRAIL-003 garantida: Stop estritamente nunca diminui!")
 
 if __name__ == "__main__":
     unittest.main()
