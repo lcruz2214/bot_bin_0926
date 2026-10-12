@@ -22,6 +22,7 @@ __pycache__/
 *.db
 *.sqlite
 *.sqlite3
+*.bak
 crypto_bot.db
 data/
 
