@@ -74,7 +74,7 @@ class BotConfig(Base):
     drop_multiplier = Column(Float, default=1.25)           # multiplicador_entrada
     drop_threshold_pct = Column(Float, default=0.015)       # queda_minima_nova_entrada (1.5%)
 
-    timeframe = Column(String(10), default="1m")
+    timeframe = Column(String(10), default="5m")
     can_buy = Column(Boolean, default=True, nullable=False)
     execution_mode = Column(String(20), default="PAPER")  # 'PAPER' ou 'REAL'
 
@@ -114,7 +114,7 @@ class BotConfig(Base):
             "max_entries_count": self.max_entries_count if hasattr(self, "max_entries_count") else 5,
             "drop_multiplier": self.drop_multiplier,
             "drop_threshold_pct": self.drop_threshold_pct,
-            "timeframe": self.timeframe or "1m",
+            "timeframe": self.timeframe or "5m",
             "kill_switch_active": bool(self.kill_switch_active) if hasattr(self, "kill_switch_active") else False,
             "kill_switch_mode": self.kill_switch_mode if hasattr(self, "kill_switch_mode") else "PARADA_OPERACIONAL",
             "safe_mode_active": bool(self.safe_mode_active) if hasattr(self, "safe_mode_active") else False,

@@ -406,6 +406,7 @@ class StrategyEngine:
         # 4. Sem posição e sem trailing buy armado
         if not config.get("can_buy", True):
             explanation["summary"] = f"Compras para o par {sym} estão desativadas pelo usuário no Gerenciador de Pares."
+            explanation["details"].append(f"Gatilho de compra inativo para {sym}: 'can_buy' está desativado na configuração.")
             return explanation
 
         rsi_met = (rsi is not None and rsi <= rsi_limit)

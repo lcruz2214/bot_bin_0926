@@ -56,6 +56,7 @@ class BotChartManager {
         // 1. Gráfico Principal de Candles
         this.candleChart = LightweightCharts.createChart(this.candleContainer, {
             ...chartTheme,
+            width: this.candleContainer.clientWidth || 600,
             height: this.candleContainer.clientHeight || 400,
             rightPriceScale: {
                 borderColor: "#1e293b",
@@ -97,6 +98,7 @@ class BotChartManager {
         // 2. Subgráfico de RSI
         this.rsiChart = LightweightCharts.createChart(this.rsiContainer, {
             ...chartTheme,
+            width: this.rsiContainer.clientWidth || 600,
             height: this.rsiContainer.clientHeight || 140,
             rightPriceScale: {
                 borderColor: "#1e293b",
@@ -146,51 +148,104 @@ class BotChartManager {
     }
 
     handleResize() {
-        window.addEventListener("resize", () => {
-            if (this.candleChart && this.candleContainer) {
+        const resize = () => {
+            if (this.candleChart && this.candleContainer && this.candleContainer.clientWidth > 0) {
                 this.candleChart.applyOptions({
                     width: this.candleContainer.clientWidth,
                     height: this.candleContainer.clientHeight || 400
                 });
             }
-            if (this.rsiChart && this.rsiContainer) {
+            if (this.rsiChart && this.rsiContainer && this.rsiContainer.clientWidth > 0) {
                 this.rsiChart.applyOptions({
                     width: this.rsiContainer.clientWidth,
                     height: this.rsiContainer.clientHeight || 140
                 });
             }
-        });
+        };
+        window.addEventListener("resize", resize);
+        // Garante que o resize rode também após carregar a página
+        setTimeout(resize, 200);
+    }
+
+    _sortAndDedup(data) {
+        if (!Array.isArray(data) || data.length === 0) return [];
+        const sorted = [...data].sort((a, b) => a.time - b.time);
+        const deduped = [];
+        for (let i = 0; i < sorted.length; i++) {
+            if (i === 0 || sorted[i].time > deduped[deduped.length - 1].time) {
+                deduped.push(sorted[i]);
+            }
+        }
+        return deduped;
+    }
+
+    setData(candles, bbUpper, bbMiddle, bbLower, rsi) {
+        if (!candles || candles.length === 0) {
+            this.candleSeries.setData([]);
+            if (this.bbUpperSeries) this.bbUpperSeries.setData([]);
+            if (this.bbMiddleSeries) this.bbMiddleSeries.setData([]);
+            if (this.bbLowerSeries) this.bbLowerSeries.setData([]);
+            if (this.rsiSeries) this.rsiSeries.setData([]);
+            return;
+        }
+
+        const cleanCandles = this._sortAndDedup(candles);
+        this.candleSeries.setData(cleanCandles);
+
+        if (this.bbUpperSeries) this.bbUpperSeries.setData(this._sortAndDedup(bbUpper || []));
+        if (this.bbMiddleSeries) this.bbMiddleSeries.setData(this._sortAndDedup(bbMiddle || []));
+        if (this.bbLowerSeries) this.bbLowerSeries.setData(this._sortAndDedup(bbLower || []));
+        if (this.rsiSeries) this.rsiSeries.setData(this._sortAndDedup(rsi || []));
+
+        // Ajusta dimensões dos gráficos se os containers possuírem largura real
+        if (this.candleContainer && this.candleContainer.clientWidth > 0) {
+            this.candleChart.applyOptions({
+                width: this.candleContainer.clientWidth,
+                height: this.candleContainer.clientHeight || 400
+            });
+        }
+        if (this.rsiContainer && this.rsiContainer.clientWidth > 0) {
+            this.rsiChart.applyOptions({
+                width: this.rsiContainer.clientWidth,
+                height: this.rsiContainer.clientHeight || 140
+            });
+        }
+
+        try {
+            this.candleChart.timeScale().fitContent();
+            this.rsiChart.timeScale().fitContent();
+        } catch (e) {
+            console.warn("Erro ao ajustar visualização dos gráficos:", e);
+        }
     }
 
     loadInitialData(data) {
         if (!data || !data.candles || data.candles.length === 0) return;
-
         this.currentSymbol = data.symbol || this.currentSymbol;
-
-        // Atualiza Séries
-        this.candleSeries.setData(data.candles);
-        if (data.bb_upper) this.bbUpperSeries.setData(data.bb_upper);
-        if (data.bb_middle) this.bbMiddleSeries.setData(data.bb_middle);
-        if (data.bb_lower) this.bbLowerSeries.setData(data.bb_lower);
-        if (data.rsi) this.rsiSeries.setData(data.rsi);
-
-        this.candleChart.timeScale().fitContent();
-        this.rsiChart.timeScale().fitContent();
+        this.setData(data.candles, data.bb_upper, data.bb_middle, data.bb_lower, data.rsi);
     }
 
     updateTick(candle, indicators) {
         if (!candle) return;
-
-        // Atualiza candle em tempo real
-        this.candleSeries.update(candle);
-
-        const t = candle.time;
-
-        if (indicators) {
-            if (indicators.bb_upper !== null) this.bbUpperSeries.update({ time: t, value: indicators.bb_upper });
-            if (indicators.bb_middle !== null) this.bbMiddleSeries.update({ time: t, value: indicators.bb_middle });
-            if (indicators.bb_lower !== null) this.bbLowerSeries.update({ time: t, value: indicators.bb_lower });
-            if (indicators.rsi !== null) this.rsiSeries.update({ time: t, value: indicators.rsi });
+        try {
+            this.candleSeries.update(candle);
+            const t = candle.time;
+            if (indicators) {
+                if (indicators.bb_upper !== null && indicators.bb_upper !== undefined && this.bbUpperSeries) {
+                    this.bbUpperSeries.update({ time: t, value: indicators.bb_upper });
+                }
+                if (indicators.bb_middle !== null && indicators.bb_middle !== undefined && this.bbMiddleSeries) {
+                    this.bbMiddleSeries.update({ time: t, value: indicators.bb_middle });
+                }
+                if (indicators.bb_lower !== null && indicators.bb_lower !== undefined && this.bbLowerSeries) {
+                    this.bbLowerSeries.update({ time: t, value: indicators.bb_lower });
+                }
+                if (indicators.rsi !== null && indicators.rsi !== undefined && this.rsiSeries) {
+                    this.rsiSeries.update({ time: t, value: indicators.rsi });
+                }
+            }
+        } catch (e) {
+            console.warn("Aviso ao atualizar tick em tempo real:", e);
         }
     }
 

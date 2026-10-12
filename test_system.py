@@ -275,5 +275,37 @@ class TestCryptoBot(unittest.TestCase):
         db.delete_asset(sym)
         print("[TEST PASS] Regra RF-TRAIL-003 garantida: Stop estritamente nunca diminui!")
 
+    def test_excluded_timeframes_and_default_strategy_config(self):
+        """Valida que os tempos 1m e 3m foram excluídos e que a configuração padrão de RSI e BB é aplicada com sucesso."""
+        # 1. 1m e 3m não podem estar nos timeframes disponíveis
+        self.assertNotIn("1m", Config.AVAILABLE_TIMEFRAMES)
+        self.assertNotIn("3m", Config.AVAILABLE_TIMEFRAMES)
+        self.assertEqual(Config.DEFAULT_TIMEFRAME, "5m")
+
+        # 2. Aplicação de configuração padrão para um par específico
+        sym = "TEST_PAD_USDT"
+        db.add_asset(sym)
+        # Altera para valores não-padrão propositalmente
+        db.update_config(sym, {
+            "rsi_period": 7,
+            "rsi_oversold": 20.0,
+            "bb_period": 10,
+            "bb_std": 3.0,
+            "activation_trigger": "and",
+            "timeframe": "15m"
+        })
+
+        # Aplica padrão
+        res = db.apply_default_strategy_config(sym)
+        self.assertEqual(res["rsi_period"], 14)
+        self.assertEqual(res["rsi_oversold"], 30.0)
+        self.assertEqual(res["bb_period"], 20)
+        self.assertEqual(res["bb_std"], 2.0)
+        self.assertEqual(res["activation_trigger"], "or")
+        self.assertEqual(res["timeframe"], "5m")
+
+        db.delete_asset(sym)
+        print("[TEST PASS] Exclusão de 1m/3m e configuração padrão de RSI/BB validados com sucesso!")
+
 if __name__ == "__main__":
     unittest.main()

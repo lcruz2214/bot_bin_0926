@@ -131,7 +131,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Estado da Aplicação
     let currentSymbol = symbolSelect.value || "BTCUSDT";
-    let currentTimeframe = "1m";
+    let currentTimeframe = "5m";
     let lastKnownPrice = 0.0;
     let currentExecutionMode = "PAPER";
 
@@ -205,7 +205,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 const canBuy = (c.can_buy !== false);
                 updateCanBuyUI(canBuy);
                 if (c.timeframe && cfgStrategyTimeframe) {
-                    cfgStrategyTimeframe.value = c.timeframe;
+                    const cleanTf = (c.timeframe === "1m" || c.timeframe === "3m") ? "5m" : c.timeframe;
+                    cfgStrategyTimeframe.value = cleanTf;
                 }
 
                 updateBotStatusUI(c.is_bot_running);
@@ -603,8 +604,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
         managePairsTableBody.innerHTML = assets.map(a => {
             const isBuy = a.can_buy !== false;
+            const currentTf = (a.timeframe === "1m" || a.timeframe === "3m") ? "5m" : (a.timeframe || "5m");
             const optionsHtml = tfOptions.map(opt => `
-                <option value="${opt.val}" ${opt.val === (a.timeframe || "1m") ? "selected" : ""}>${opt.label}</option>
+                <option value="${opt.val}" ${opt.val === currentTf ? "selected" : ""}>${opt.label}</option>
             `).join("");
 
             let posHtml = `<span class="text-muted mono" style="font-size: 0.8rem;">Nenhuma</span>`;
@@ -1133,7 +1135,7 @@ document.addEventListener("DOMContentLoaded", () => {
             drop_multiplier: parseFloat(dropMultInput.value),
             drop_threshold_pct: parseFloat(dropThreshInput.value) / 100.0,
             can_buy: cfgCanBuy ? cfgCanBuy.checked : true,
-            timeframe: cfgStrategyTimeframe ? cfgStrategyTimeframe.value : "1m"
+            timeframe: cfgStrategyTimeframe ? cfgStrategyTimeframe.value : "5m"
         };
 
         try {
@@ -1154,6 +1156,34 @@ document.addEventListener("DOMContentLoaded", () => {
             showToast("Erro ao salvar parâmetros.", "ERROR");
         }
     });
+
+    // Botão: Aplicar Configuração Padrão (RSI + Bandas de Bollinger)
+    const btnApplyDefaultConfig = document.getElementById("btn-apply-default-config");
+    if (btnApplyDefaultConfig) {
+        btnApplyDefaultConfig.addEventListener("click", async () => {
+            try {
+                const resp = await fetch("/api/config/apply-default", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ symbol: currentSymbol })
+                });
+                const res = await resp.json();
+                if (res.success && res.config) {
+                    await loadConfig(currentSymbol);
+                    currentTimeframe = res.config.timeframe || "5m";
+                    timeframeBtns.forEach(b => {
+                        b.classList.toggle("active", b.getAttribute("data-tf") === currentTimeframe);
+                    });
+                    loadSymbolData(currentSymbol);
+                    showToast("Configuração padrão de RSI (14/30) e Bollinger (20/2.0) aplicada com sucesso!", "SUCCESS");
+                } else {
+                    showToast(res.error || "Erro ao aplicar configuração padrão.", "ERROR");
+                }
+            } catch (e) {
+                showToast("Falha na requisição ao aplicar parâmetros padrão.", "ERROR");
+            }
+        });
+    }
 
     if (cfgCanBuy) {
         cfgCanBuy.addEventListener("change", (e) => {

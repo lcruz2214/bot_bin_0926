@@ -23,9 +23,9 @@ class BinanceMarketStream:
     - Remoção dinâmica de pares do stream de mercado (Exclusão de Pares).
     """
 
-    def __init__(self, symbols: List[str] = None, timeframe: str = "1m"):
+    def __init__(self, symbols: List[str] = None, timeframe: str = "5m"):
         self.symbols = [s.upper() for s in (symbols or Config.AVAILABLE_SYMBOLS)]
-        self.timeframe = timeframe
+        self.timeframe = timeframe or Config.DEFAULT_TIMEFRAME
         self.running = False
         self.thread: Optional[threading.Thread] = None
         self.loop: Optional[asyncio.AbstractEventLoop] = None
@@ -33,7 +33,7 @@ class BinanceMarketStream:
         self.status = "DESCONECTADO"  # CONECTADO, RECONECTANDO, DESCONECTADO, RECUPERANDO
         self.max_reconnect_attempts = 50
 
-        # Buffer de candles por símbolo e timeframe: { "BTCUSDT_1m": pd.DataFrame(...), "BTCUSDT_1d": ... }
+        # Buffer de candles por símbolo e timeframe: { "BTCUSDT_5m": pd.DataFrame(...), "BTCUSDT_1d": ... }
         self.candle_buffers: Dict[str, pd.DataFrame] = {}
         self.latest_tickers: Dict[str, Dict] = {}
         self.subscribed_streams: Set[str] = set()
@@ -54,7 +54,7 @@ class BinanceMarketStream:
                 except Exception as e:
                     logger.error(f"Erro no callback de status do WebSocket: {e}")
 
-    def fetch_historical_klines(self, symbol: str, interval: str = "1m", limit: int = 150) -> pd.DataFrame:
+    def fetch_historical_klines(self, symbol: str, interval: str = "5m", limit: int = 150) -> pd.DataFrame:
         """Busca histórico de candles via REST API da Binance para o intervalo solicitado."""
         url = f"{Config.BINANCE_REST_URL}/klines"
         params = {
@@ -120,10 +120,10 @@ class BinanceMarketStream:
                 except Exception as e:
                     logger.error(f"Erro ao enviar SUBSCRIBE para {stream_name}: {e}")
 
-    def get_chart_data(self, symbol: str, timeframe: str = "1m", rsi_period: int = 14, bb_period: int = 20, bb_std: float = 2.0) -> Dict:
+    def get_chart_data(self, symbol: str, timeframe: str = "5m", rsi_period: int = 14, bb_period: int = 20, bb_std: float = 2.0) -> Dict:
         """Retorna histórico de candles no timeframe selecionado com indicadores calculados."""
         sym = symbol.upper().strip()
-        tf = (timeframe or "1m").lower().strip()
+        tf = (timeframe or "5m").lower().strip()
         key = f"{sym}_{tf}"
 
         if key not in self.candle_buffers or self.candle_buffers[key].empty:
@@ -156,17 +156,17 @@ class BinanceMarketStream:
             t = int(row["time"])
             candles.append({
                 "time": t,
-                "open": round(row["open"], 4),
-                "high": round(row["high"], 4),
-                "low": round(row["low"], 4),
-                "close": round(row["close"], 4)
+                "open": round(float(row["open"]), 4),
+                "high": round(float(row["high"]), 4),
+                "low": round(float(row["low"]), 4),
+                "close": round(float(row["close"]), 4)
             })
             if pd.notna(row.get("bb_upper")):
-                bb_upper.append({"time": t, "value": round(row["bb_upper"], 4)})
-                bb_middle.append({"time": t, "value": round(row["bb_middle"], 4)})
-                bb_lower.append({"time": t, "value": round(row["bb_lower"], 4)})
+                bb_upper.append({"time": t, "value": round(float(row["bb_upper"]), 4)})
+                bb_middle.append({"time": t, "value": round(float(row["bb_middle"]), 4)})
+                bb_lower.append({"time": t, "value": round(float(row["bb_lower"]), 4)})
             if pd.notna(row.get("rsi")):
-                rsi.append({"time": t, "value": round(row["rsi"], 2)})
+                rsi.append({"time": t, "value": round(float(row["rsi"]), 2)})
 
         return {
             "symbol": sym,

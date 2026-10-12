@@ -1,5 +1,6 @@
 import json
 import logging
+from typing import Dict, List, Optional, Tuple, Any
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from sqlalchemy import create_engine, desc, func, text
@@ -208,6 +209,11 @@ class DatabaseHandler:
                 )
                 session.add(global_cfg)
 
+            # Migração de timeframes: atualiza qualquer registro antigo com 1m ou 3m para 5m
+            legacy_cfgs = session.query(BotConfig).filter(BotConfig.timeframe.in_(["1m", "3m"])).all()
+            for lc in legacy_cfgs:
+                lc.timeframe = Config.DEFAULT_TIMEFRAME
+
             session.commit()
             logger.info("Tabelas e registros iniciais configurados com sucesso.")
 
@@ -337,6 +343,9 @@ class DatabaseHandler:
                     timeframe=Config.DEFAULT_TIMEFRAME
                 )
                 session.add(cfg)
+            else:
+                cfg.can_buy = True
+                cfg.is_bot_running = True
 
             session.commit()
             res = asset.to_dict()
@@ -599,6 +608,71 @@ class DatabaseHandler:
             cfg.updated_at = datetime.now(timezone.utc)
             session.commit()
             return cfg.to_dict()
+
+    def apply_default_strategy_config(self, symbol=None) -> Dict:
+        """
+        Aplica a configuração padrão recomendada de RSI e Bandas de Bollinger:
+        - RSI: Período 14, Sobrevenda 30.0, Sobrecompra 70.0
+        - Bandas de Bollinger: Período 20, Desvio Padrão 2.0
+        - Gatilho: 'or' (RSI <= 30 OU Preço <= BB Inferior)
+        - Timeframe: '5m'
+        - Trailing Buy Delta: 0.5% (0.005), Histerese Compra: 0.2% (0.002)
+        - Trailing Stop Delta: 1.0% (0.010), Histerese Venda: 0.2% (0.002)
+        - Escalonamento: Multiplicador 1.2, Queda Mínima 1.5% (0.015)
+        - Ordem Base: 25.0 USDT, Limite por Ordem: 150.0 USDT, Entradas Máx: 5
+        - Alocação Máx Ativo: 200.0 USDT, Limite Capital Total Aberto: 500.0 USDT
+        """
+        defaults = {
+            "rsi_period": Config.DEFAULT_RSI_PERIOD,
+            "rsi_oversold": Config.DEFAULT_RSI_OVERSOLD,
+            "rsi_overbought": Config.DEFAULT_RSI_OVERBOUGHT,
+            "bb_period": Config.DEFAULT_BB_PERIOD,
+            "bb_std": Config.DEFAULT_BB_STD,
+            "activation_trigger": Config.DEFAULT_ACTIVATION_TRIGGER,
+            "timeframe": Config.DEFAULT_TIMEFRAME,
+            "trailing_buy_delta": Config.DEFAULT_TRAILING_BUY_DELTA,
+            "buy_hysteresis": Config.DEFAULT_BUY_HYSTERESIS,
+            "trailing_stop_delta": Config.DEFAULT_TRAILING_STOP_DELTA,
+            "sell_hysteresis": Config.DEFAULT_SELL_HYSTERESIS,
+            "base_order_usdt": Config.DEFAULT_BASE_ORDER_USDT,
+            "max_order_amount_usdt": 150.0,
+            "max_asset_allocation_usdt": Config.DEFAULT_MAX_ASSET_ALLOCATION_USDT,
+            "max_total_open_capital_usdt": Config.DEFAULT_MAX_TOTAL_OPEN_CAPITAL_USDT,
+            "max_entries_count": 5,
+            "drop_multiplier": Config.DEFAULT_DROP_MULTIPLIER,
+            "drop_threshold_pct": Config.DEFAULT_DROP_THRESHOLD_PCT
+        }
+        with self.get_session() as session:
+            if symbol and symbol.upper() != "ALL":
+                sym_up = symbol.upper().strip()
+                cfg = session.query(BotConfig).filter_by(symbol=sym_up).first()
+                if not cfg:
+                    cfg = BotConfig(symbol=sym_up, **defaults)
+                    session.add(cfg)
+                else:
+                    for k, v in defaults.items():
+                        setattr(cfg, k, v)
+                cfg.updated_at = datetime.now(timezone.utc)
+                session.commit()
+                res = cfg.to_dict()
+            else:
+                cfgs = session.query(BotConfig).all()
+                for c in cfgs:
+                    for k, v in defaults.items():
+                        setattr(c, k, v)
+                    c.updated_at = datetime.now(timezone.utc)
+                session.commit()
+                global_cfg = session.query(BotConfig).filter_by(is_global=True).first()
+                res = global_cfg.to_dict() if global_cfg else defaults
+
+        self.log_event(
+            event_type="CONFIG_PADRAO_APLICADA",
+            message=f"Configuração padrão de RSI e Bandas de Bollinger aplicada para {symbol or 'TODOS'}",
+            level="INFO",
+            symbol=symbol if (symbol and symbol.upper() != "ALL") else None,
+            details=defaults
+        )
+        return res
 
     # ==========================================
     # MÁQUINA DE ESTADOS DA POSIÇÃO (RF-ESTADO)

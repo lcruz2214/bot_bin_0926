@@ -306,10 +306,48 @@ def api_config():
     cfg = db.get_config(symbol)
     return jsonify({"success": True, "config": cfg})
 
+@app.route("/api/config/apply-default", methods=["POST"])
+def api_apply_default_config():
+    """Aplica a parametrização padrão recomendada de RSI (14/30) e Bollinger (20/2.0)."""
+    data = request.json or {}
+    symbol = data.get("symbol", "").upper().strip() or None
+    cfg = db.apply_default_strategy_config(symbol)
+    if symbol and cfg.get("timeframe"):
+        market_stream.ensure_kline_subscription(symbol, cfg["timeframe"])
+    socketio.emit("config_updated", {"symbol": symbol, "config": cfg})
+    return jsonify({"success": True, "config": cfg, "message": "Configuração padrão de RSI e Bollinger aplicada com sucesso."})
+
+@app.route("/api/config/defaults", methods=["GET"])
+def api_get_default_config():
+    """Retorna os valores padrão da estratégia."""
+    defaults = {
+        "rsi_period": Config.DEFAULT_RSI_PERIOD,
+        "rsi_oversold": Config.DEFAULT_RSI_OVERSOLD,
+        "rsi_overbought": Config.DEFAULT_RSI_OVERBOUGHT,
+        "bb_period": Config.DEFAULT_BB_PERIOD,
+        "bb_std": Config.DEFAULT_BB_STD,
+        "activation_trigger": Config.DEFAULT_ACTIVATION_TRIGGER,
+        "timeframe": Config.DEFAULT_TIMEFRAME,
+        "trailing_buy_delta": Config.DEFAULT_TRAILING_BUY_DELTA,
+        "buy_hysteresis": Config.DEFAULT_BUY_HYSTERESIS,
+        "trailing_stop_delta": Config.DEFAULT_TRAILING_STOP_DELTA,
+        "sell_hysteresis": Config.DEFAULT_SELL_HYSTERESIS,
+        "base_order_usdt": Config.DEFAULT_BASE_ORDER_USDT,
+        "max_order_amount_usdt": 150.0,
+        "max_asset_allocation_usdt": Config.DEFAULT_MAX_ASSET_ALLOCATION_USDT,
+        "max_total_open_capital_usdt": Config.DEFAULT_MAX_TOTAL_OPEN_CAPITAL_USDT,
+        "max_entries_count": 5,
+        "drop_multiplier": Config.DEFAULT_DROP_MULTIPLIER,
+        "drop_threshold_pct": Config.DEFAULT_DROP_THRESHOLD_PCT
+    }
+    return jsonify({"success": True, "defaults": defaults})
+
 @app.route("/api/chart-data", methods=["GET"])
 def api_chart_data():
     symbol = request.args.get("symbol", Config.AVAILABLE_SYMBOLS[0]).upper()
     timeframe = request.args.get("timeframe", Config.DEFAULT_TIMEFRAME).lower().strip()
+    if timeframe in ("1m", "3m"):
+        timeframe = Config.DEFAULT_TIMEFRAME
     cfg = db.get_config(symbol)
     rsi_p = cfg.get("rsi_period", Config.DEFAULT_RSI_PERIOD)
     bb_p = cfg.get("bb_period", Config.DEFAULT_BB_PERIOD)

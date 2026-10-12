@@ -269,8 +269,6 @@
                             </div>
                         </div>
                         <select id="cfg-strategy-timeframe" class="form-input mono" style="font-weight: 600;">
-                            <option value="1m">1m — 1 Minuto (Escalpos Rápidos)</option>
-                            <option value="3m">3m — 3 Minutos</option>
                             <option value="5m">5m — 5 Minutos (Day Trade Padrão)</option>
                             <option value="15m">15m — 15 Minutos (Filtro Robusto de Ruído)</option>
                             <option value="30m">30m — 30 Minutos</option>
@@ -513,7 +511,14 @@
                         </div>
                     </div>
 
-                    <button type="submit" class="btn-primary" style="margin-top: 0.75rem;">Salvar Parâmetros</button>
+                    <div style="display: flex; gap: 0.5rem; margin-top: 0.75rem;">
+                        <button type="submit" class="btn-primary" style="flex: 1;">Salvar Parâmetros</button>
+                        <button type="button" id="btn-apply-default-config" class="btn-secondary"
+                            title="Aplica parametrização recomendada: RSI 14/30, BB 20/2.0, Gatilho OR e Timeframe 5m"
+                            style="display: flex; align-items: center; justify-content: center; gap: 0.35rem; white-space: nowrap; font-size: 0.85rem;">
+                            ⚡ Aplicar Padrão
+                        </button>
+                    </div>
                 </form>
             </aside>
         </main>

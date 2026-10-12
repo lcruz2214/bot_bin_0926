@@ -38,8 +38,9 @@ class Config:
     AVAILABLE_SYMBOLS = [
         s.strip().upper() for s in os.getenv("DEFAULT_SYMBOLS", "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT").split(",") if s.strip()
     ]
-    DEFAULT_TIMEFRAME = os.getenv("DEFAULT_TIMEFRAME", "1m")
-    AVAILABLE_TIMEFRAMES = ["1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"]
+    AVAILABLE_TIMEFRAMES = ["5m", "15m", "30m", "1h", "4h", "1d"]
+    _raw_tf = os.getenv("DEFAULT_TIMEFRAME", "5m").lower().strip()
+    DEFAULT_TIMEFRAME = _raw_tf if _raw_tf in AVAILABLE_TIMEFRAMES else "5m"
 
     # Parâmetros Técnicos Padrão
     DEFAULT_RSI_PERIOD = 14
