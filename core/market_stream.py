@@ -54,13 +54,15 @@ class BinanceMarketStream:
                 except Exception as e:
                     logger.error(f"Erro no callback de status do WebSocket: {e}")
 
-    def fetch_historical_klines(self, symbol: str, interval: str = "5m", limit: int = 150) -> pd.DataFrame:
-        """Busca histórico de candles via REST API da Binance para o intervalo solicitado."""
+    def fetch_historical_klines(self, symbol: str, interval: str = "5m", limit: int = None) -> pd.DataFrame:
+        """Busca histórico de candles via REST API da Binance para o intervalo solicitado garantindo no mínimo 90 amostras."""
+        req_limit = limit if limit is not None else Config.DEFAULT_CANDLE_LIMIT
+        req_limit = max(int(req_limit), Config.MIN_CANDLE_SAMPLES)
         url = f"{Config.BINANCE_REST_URL}/klines"
         params = {
             "symbol": symbol.upper().strip(),
             "interval": interval.lower().strip(),
-            "limit": limit
+            "limit": req_limit
         }
         try:
             resp = requests.get(url, params=params, timeout=10)
@@ -83,26 +85,32 @@ class BinanceMarketStream:
             logger.error(f"Erro ao buscar histórico de klines para {symbol} ({interval}): {e}")
             return pd.DataFrame(columns=["time", "open", "high", "low", "close", "volume"])
 
-    def initialize_buffers(self, symbols: List[str] = None, timeframe: str = None):
-        """Carrega candles iniciais para os símbolos configurados."""
+    def initialize_buffers(self, symbols: List[str] = None, timeframes: List[str] = None):
+        """
+        Carrega candles iniciais para todos os símbolos e períodos disponíveis,
+        assegurando no mínimo 90 amostras por par e tempo selecionado (USER REQUEST).
+        """
         symbols = symbols or self.symbols
-        tf = (timeframe or self.timeframe).lower()
+        target_tfs = timeframes or Config.AVAILABLE_TIMEFRAMES
         for sym in symbols:
-            key = f"{sym}_{tf}"
-            df = self.fetch_historical_klines(sym, interval=tf, limit=120)
-            if not df.empty:
-                self.candle_buffers[key] = df
-                logger.info(f"Buffer de {key} inicializado com {len(df)} candles.")
+            for tf in target_tfs:
+                tf_clean = tf.lower().strip()
+                key = f"{sym}_{tf_clean}"
+                if key not in self.candle_buffers or len(self.candle_buffers[key]) < Config.MIN_CANDLE_SAMPLES:
+                    df = self.fetch_historical_klines(sym, interval=tf_clean, limit=Config.DEFAULT_CANDLE_LIMIT)
+                    if not df.empty:
+                        self.candle_buffers[key] = df
+                        logger.info(f"Buffer de {key} inicializado com {len(df)} candles (mínimo exigido: {Config.MIN_CANDLE_SAMPLES}).")
 
     def ensure_kline_subscription(self, symbol: str, timeframe: str):
-        """Garante que a conexão WebSocket está inscrita no stream do par e timeframe."""
+        """Garante que a conexão WebSocket está inscrita no stream do par e timeframe com buffer de no mínimo 90 amostras."""
         sym = symbol.lower().strip()
         tf = timeframe.lower().strip()
         stream_name = f"{sym}@kline_{tf}"
         key = f"{symbol.upper().strip()}_{tf}"
 
-        if key not in self.candle_buffers or self.candle_buffers[key].empty:
-            df = self.fetch_historical_klines(symbol.upper().strip(), interval=tf, limit=120)
+        if key not in self.candle_buffers or len(self.candle_buffers[key]) < Config.MIN_CANDLE_SAMPLES:
+            df = self.fetch_historical_klines(symbol.upper().strip(), interval=tf, limit=Config.DEFAULT_CANDLE_LIMIT)
             if not df.empty:
                 self.candle_buffers[key] = df
 
@@ -121,13 +129,13 @@ class BinanceMarketStream:
                     logger.error(f"Erro ao enviar SUBSCRIBE para {stream_name}: {e}")
 
     def get_chart_data(self, symbol: str, timeframe: str = "5m", rsi_period: int = 14, bb_period: int = 20, bb_std: float = 2.0) -> Dict:
-        """Retorna histórico de candles no timeframe selecionado com indicadores calculados."""
+        """Retorna histórico de candles no timeframe selecionado com indicadores calculados e garantia mínima de 90 amostras."""
         sym = symbol.upper().strip()
-        tf = (timeframe or "5m").lower().strip()
+        tf = (timeframe or Config.DEFAULT_TIMEFRAME).lower().strip()
         key = f"{sym}_{tf}"
 
-        if key not in self.candle_buffers or self.candle_buffers[key].empty:
-            df = self.fetch_historical_klines(sym, interval=tf, limit=120)
+        if key not in self.candle_buffers or len(self.candle_buffers[key]) < Config.MIN_CANDLE_SAMPLES:
+            df = self.fetch_historical_klines(sym, interval=tf, limit=Config.DEFAULT_CANDLE_LIMIT)
             if not df.empty:
                 self.candle_buffers[key] = df
             else:
@@ -206,11 +214,12 @@ class BinanceMarketStream:
 
         while self.running:
             try:
-                # Monta streams combinados dos pares ativos
+                # Monta streams combinados dos pares ativos para todos os períodos disponíveis
                 for sym in self.symbols:
                     s_lower = sym.lower()
-                    self.subscribed_streams.add(f"{s_lower}@kline_{self.timeframe}")
                     self.subscribed_streams.add(f"{s_lower}@ticker")
+                    for tf in Config.AVAILABLE_TIMEFRAMES:
+                        self.subscribed_streams.add(f"{s_lower}@kline_{tf.lower().strip()}")
 
                 stream_url = f"{Config.BINANCE_STREAM_URL}{'/'.join(list(self.subscribed_streams))}"
                 logger.info(f"Conectando ao Binance WebSocket: {len(self.subscribed_streams)} streams ativos.")
@@ -252,14 +261,14 @@ class BinanceMarketStream:
                 backoff = min(backoff * 2, 30)
 
     def _recover_missing_data(self):
-        """Atualiza os últimos candles de todos os pares monitorados via REST após reconexão (RF-WS-004)."""
+        """Atualiza os últimos candles de todos os pares monitorados via REST após reconexão com garantia de no mínimo 90 amostras (RF-WS-004)."""
         try:
-            logger.info("Recuperando histórico recente de candles pós-reconexão...")
+            logger.info("Recuperando histórico recente de candles pós-reconexão com garantia de no mínimo 90 amostras...")
             for sym in self.symbols:
                 for k in list(self.candle_buffers.keys()):
                     if k.startswith(f"{sym}_"):
                         tf = k.split("_")[1]
-                        df = self.fetch_historical_klines(sym, interval=tf, limit=30)
+                        df = self.fetch_historical_klines(sym, interval=tf, limit=Config.DEFAULT_CANDLE_LIMIT)
                         if not df.empty:
                             self.candle_buffers[k] = df
             logger.info("Recuperação de dados concluída.")
@@ -278,7 +287,7 @@ class BinanceMarketStream:
             return False
 
     def add_symbol(self, symbol: str) -> bool:
-        """Adiciona dinamicamente um novo par de moedas ao stream e inicializa buffers."""
+        """Adiciona dinamicamente um novo par de moedas ao stream e inicializa buffers de todos os períodos com mínimo de 90 amostras."""
         sym = symbol.upper().strip()
         if not self.validate_symbol(sym):
             logger.warning(f"Par {sym} não encontrado ou inválido na Binance.")
@@ -286,23 +295,28 @@ class BinanceMarketStream:
 
         if sym not in self.symbols:
             self.symbols.append(sym)
-            key = f"{sym}_{self.timeframe}"
-            df = self.fetch_historical_klines(sym, interval=self.timeframe, limit=120)
-            if not df.empty:
-                self.candle_buffers[key] = df
+            for tf in Config.AVAILABLE_TIMEFRAMES:
+                tf_clean = tf.lower().strip()
+                key = f"{sym}_{tf_clean}"
+                df = self.fetch_historical_klines(sym, interval=tf_clean, limit=Config.DEFAULT_CANDLE_LIMIT)
+                if not df.empty:
+                    self.candle_buffers[key] = df
 
             if self.loop and self.loop.is_running() and hasattr(self, "ws") and self.ws:
                 try:
+                    sub_params = [f"{sym.lower()}@ticker"]
+                    for tf in Config.AVAILABLE_TIMEFRAMES:
+                        sub_params.append(f"{sym.lower()}@kline_{tf.lower().strip()}")
                     sub_msg = {
                         "method": "SUBSCRIBE",
-                        "params": [f"{sym.lower()}@kline_{self.timeframe}", f"{sym.lower()}@ticker"],
+                        "params": sub_params,
                         "id": int(time.time() * 1000)
                     }
                     asyncio.run_coroutine_threadsafe(self.ws.send(json.dumps(sub_msg)), self.loop)
                 except Exception as e:
                     logger.error(f"Erro ao enviar SUBSCRIBE para {sym}: {e}")
 
-            logger.info(f"Par {sym} adicionado dinamicamente ao streaming Binance!")
+            logger.info(f"Par {sym} adicionado dinamicamente ao streaming Binance com buffers de no mínimo 90 amostras!")
         return True
 
     def remove_symbol(self, symbol: str) -> bool:
@@ -396,8 +410,8 @@ class BinanceMarketStream:
 
     def _update_candle_buffer(self, symbol: str, timeframe: str, candle: Dict):
         key = f"{symbol}_{timeframe}"
-        if key not in self.candle_buffers or self.candle_buffers[key].empty:
-            df = self.fetch_historical_klines(symbol, interval=timeframe, limit=120)
+        if key not in self.candle_buffers or len(self.candle_buffers[key]) < Config.MIN_CANDLE_SAMPLES:
+            df = self.fetch_historical_klines(symbol, interval=timeframe, limit=Config.DEFAULT_CANDLE_LIMIT)
             if df.empty:
                 df = pd.DataFrame([candle])
             self.candle_buffers[key] = df
@@ -420,8 +434,8 @@ class BinanceMarketStream:
                 "volume": candle["volume"]
             }])
             df = pd.concat([df, new_row], ignore_index=True)
-            if len(df) > 200:
-                df = df.iloc[-200:].reset_index(drop=True)
+            if len(df) > 300:
+                df = df.iloc[-300:].reset_index(drop=True)
             self.candle_buffers[key] = df
 
     def get_latest_price(self, symbol: str) -> Optional[float]:

@@ -41,6 +41,10 @@ class Config:
     AVAILABLE_TIMEFRAMES = ["5m", "15m", "30m", "1h", "4h", "1d"]
     _raw_tf = os.getenv("DEFAULT_TIMEFRAME", "5m").lower().strip()
     DEFAULT_TIMEFRAME = _raw_tf if _raw_tf in AVAILABLE_TIMEFRAMES else "5m"
+    
+    # Amostragem Mínima de Histórico de Candles por Período / Timeframe (mínimo 90 amostras)
+    MIN_CANDLE_SAMPLES = int(os.getenv("MIN_CANDLE_SAMPLES", "90"))
+    DEFAULT_CANDLE_LIMIT = int(os.getenv("DEFAULT_CANDLE_LIMIT", "120"))
 
     # Parâmetros Técnicos Padrão
     DEFAULT_RSI_PERIOD = 14

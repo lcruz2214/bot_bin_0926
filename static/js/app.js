@@ -166,6 +166,13 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (cd.bb_upper.length > 0) bbUpperEl.textContent = `$${cd.bb_upper[cd.bb_upper.length - 1].value.toFixed(2)}`;
                 if (cd.bb_middle.length > 0) bbMiddleEl.textContent = `$${cd.bb_middle[cd.bb_middle.length - 1].value.toFixed(2)}`;
                 if (cd.bb_lower.length > 0) bbLowerEl.textContent = `$${cd.bb_lower[cd.bb_lower.length - 1].value.toFixed(2)}`;
+                
+                const chipSamplesCount = document.getElementById("chip-samples-count");
+                if (chipSamplesCount) {
+                    const cnt = cd.candles ? cd.candles.length : 0;
+                    chipSamplesCount.textContent = cnt;
+                    chipSamplesCount.title = `${cnt} amostras / candles no período ${currentTimeframe}`;
+                }
             }
 
             await loadConfig(symbol);
@@ -961,6 +968,13 @@ document.addEventListener("DOMContentLoaded", () => {
                     if (ind.bb_upper !== null) bbUpperEl.textContent = `$${ind.bb_upper.toFixed(2)}`;
                     if (ind.bb_middle !== null) bbMiddleEl.textContent = `$${ind.bb_middle.toFixed(2)}`;
                     if (ind.bb_lower !== null) bbLowerEl.textContent = `$${ind.bb_lower.toFixed(2)}`;
+                }
+
+                if (data.samples_count) {
+                    const chipSamplesCount = document.getElementById("chip-samples-count");
+                    if (chipSamplesCount) {
+                        chipSamplesCount.textContent = data.samples_count;
+                    }
                 }
             }
             updatePercentagePreviews();

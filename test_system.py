@@ -307,5 +307,26 @@ class TestCryptoBot(unittest.TestCase):
         db.delete_asset(sym)
         print("[TEST PASS] Exclusão de 1m/3m e configuração padrão de RSI/BB validados com sucesso!")
 
+    def test_minimum_sampling_requirement_all_periods(self):
+        """Valida que todos os períodos possuem amostragem mínima de 90 candles para todos os pares (USER REQUEST)."""
+        self.assertEqual(Config.MIN_CANDLE_SAMPLES, 90)
+        self.assertGreaterEqual(Config.DEFAULT_CANDLE_LIMIT, 90)
+
+        # 1. Teste de clamp: mesmo solicitando limit=10, deve buscar no mínimo 90
+        # Simula resposta mock da Binance
+        stream = BinanceMarketStream(symbols=["BTCUSDT"])
+        df_clamp = stream.fetch_historical_klines("BTCUSDT", interval="1h", limit=10)
+        self.assertGreaterEqual(len(df_clamp), 90)
+
+        # 2. Testa get_chart_data para múltiplos períodos da lista disponível
+        for tf in Config.AVAILABLE_TIMEFRAMES:
+            data = stream.get_chart_data("BTCUSDT", timeframe=tf)
+            self.assertIn("candles", data)
+            self.assertGreaterEqual(len(data["candles"]), 90, f"Período {tf} deve ter no mínimo 90 amostras!")
+            self.assertIn("rsi", data)
+            self.assertIn("bb_upper", data)
+
+        print("[TEST PASS] Requisito de amostragem mínima de 90 amostras por período validado com sucesso!")
+
 if __name__ == "__main__":
     unittest.main()

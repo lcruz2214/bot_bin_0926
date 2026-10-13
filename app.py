@@ -65,7 +65,8 @@ def handle_candle_update(symbol: str, timeframe: str, candle: dict, df_buffer):
             "symbol": symbol,
             "timeframe": timeframe.lower(),
             "candle": candle,
-            "indicators": indicators
+            "indicators": indicators,
+            "samples_count": len(df_buffer) if df_buffer is not None else 0
         })
     except Exception as e:
         logger.error(f"Erro no processamento do tick de {symbol} ({timeframe}): {e}")
